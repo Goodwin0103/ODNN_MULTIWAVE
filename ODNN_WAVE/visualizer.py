@@ -94,43 +94,39 @@ class Visualizer:
         
         return regions
     
-    # 添加缺失的方法
-    def _create_evaluation_regions(self, H, W, N, radius, detectsize):
-        """创建基本的N个检测器布局"""
-        # 计算网格中的行和列数量
-        num_rows = int(np.floor(np.sqrt(N)))  # 行数
-        num_cols = int(np.ceil(N / num_rows))  # 列数
+    def _create_evaluation_regions(self, H, W):
+        """
+        创建9个检测区域，每个对应一种波长-模式组合
         
-        # 计算圆之间的间距
-        row_spacing = (H - num_rows * 2 * radius) / (num_rows + 1)
-        col_spacing = (W - num_cols * 2 * radius) / (num_cols + 1)
+        参数:
+            H, W: 图像的高度和宽度
+        返回:
+            regions: 包含9个区域坐标的列表
+        """
+        num_modes = self.config.num_modes
+        num_wavelengths = len(self.config.wavelengths)
         
-        # 初始化检测区域的坐标列表
+        # 计算区域大小
+        region_width = W // num_wavelengths
+        region_height = H // num_modes
+        
+        # 初始化区域列表
         regions = []
         
-        # 计数器
-        circle_count = 0
-        
-        # 遍历行和列以放置圆
-        for r in range(1, num_rows + 1):
-            for c in range(1, num_cols + 1):
-                if circle_count < N:
-                    # 计算每个圆的中心
-                    center_row = round((r - 1) * (2 * radius + row_spacing) + row_spacing + radius)
-                    center_col = round((c - 1) * (2 * radius + col_spacing) + col_spacing + radius)
-                    
-                    # 计算检测区域
-                    half_size = detectsize // 2
-                    x_start = max(center_col - half_size, 0)
-                    x_end = min(center_col + half_size, W)
-                    y_start = max(center_row - half_size, 0)
-                    y_end = min(center_row + half_size, H)
-                    regions.append((x_start, x_end, y_start, y_end))
-                    
-                    # 增加计数器
-                    circle_count += 1
+        # 生成网格布局的检测区域 - 行是模式，列是波长
+        for mode_idx in range(num_modes):
+            for wl_idx in range(num_wavelengths):
+                # 计算该区域的坐标
+                x_start = wl_idx * region_width
+                x_end = (wl_idx + 1) * region_width
+                y_start = mode_idx * region_height
+                y_end = (mode_idx + 1) * region_height
+                
+                # 添加区域坐标
+                regions.append((x_start, x_end, y_start, y_end))
         
         return regions
+
     
     def _create_evaluation_regions_4_MMF3_phase(self, H, W, radius, detectsize):
         """创建5个检测器的特殊布局"""
@@ -329,99 +325,93 @@ class Visualizer:
         ax.grid(True, linestyle='--', alpha=0.5)
         plt.show()
     
-    # 添加可视化检测区域的方法
     def visualize_detector_regions(self, save_path=None):
         """
-        可视化当前配置中的检测器区域
+        可视化9个波长-模式组合的检测区域布局
         
         参数:
-            save_path: 如果提供，将图像保存到指定路径
+            save_path: 可选的保存路径
         """
         H, W = self.config.field_size, self.config.field_size
-        radius = self.config.focus_radius
-        detectsize = self.config.detectsize
+        num_modes = self.config.num_modes
+        num_wavelengths = len(self.config.wavelengths)
         
-        # 创建图像
+        # 创建空白图像
         image = np.zeros((H, W))
         
-        # 获取检测器区域
-        if hasattr(self.config, 'num_modes') and self.config.num_modes == 5:
-            # 使用5个检测器的特殊布局
-            regions = self._create_evaluation_regions_4_MMF3_phase(H, W, radius, detectsize)
-        else:
-            # 使用基本的3个检测器布局
-            regions = self._create_evaluation_regions(H, W, 3, radius, detectsize)
+        # 获取检测区域
+        regions = self._create_evaluation_regions(H, W)
         
-        # 绘制检测器区域
-        fig, ax = plt.subplots(figsize=(10, 10))
+        # 创建图像
+        fig, ax = plt.subplots(figsize=(12, 10))
         
+        # 定义标签
+        wavelength_labels = [f'{wl*1e9:.0f}nm' for wl in self.config.wavelengths]
+        mode_labels = [f'模式{i+1}' for i in range(num_modes)]
+        
+        # 绘制检测区域
         for i, (x_start, x_end, y_start, y_end) in enumerate(regions):
-            # 绘制正方形检测区域
+            # 计算当前区域对应的模式和波长
+            mode_idx = i // num_wavelengths
+            wl_idx = i % num_wavelengths
+            
+            # 计算区域中心点
+            center_x = (x_start + x_end) // 2
+            center_y = (y_start + y_end) // 2
+            
+            # 生成唯一的颜色
+            color = plt.cm.tab10(mode_idx % 10)
+            
+            # 绘制矩形区域
             rect = plt.Rectangle((x_start, y_start), x_end-x_start, y_end-y_start, 
-                                fill=False, edgecolor='blue', linewidth=2, alpha=0.8)
+                                fill=True, color=color, alpha=0.3, 
+                                edgecolor='black', linewidth=1.5)
             ax.add_patch(rect)
             
-            # 标记检测器中心
-            center_x = (x_start + x_end) // 2
-            center_y = (y_start + y_end) // 2
-            
-            # 如果提供了半径，绘制圆形
-            circle = plt.Circle((center_x, center_y), radius, 
-                              fill=True, color='red', alpha=0.3)
-            ax.add_patch(circle)
-            
-            # 添加检测器编号
-            ax.text(center_x, center_y, str(i+1), 
-                   color='white', fontsize=12, ha='center', va='center',
-                   bbox=dict(facecolor='black', alpha=0.7, boxstyle='round'))
+            # 添加区域标签
+            label = f"{mode_labels[mode_idx]}\n{wavelength_labels[wl_idx]}"
+            ax.text(center_x, center_y, f"{i+1}: {label}", 
+                ha='center', va='center', fontsize=10,
+                bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.3'))
         
         # 设置图像属性
-        ax.imshow(image, cmap='gray', extent=[0, W, 0, H], origin='lower')
-        ax.set_title('当前检测器布局配置', fontsize=14)
+        ax.imshow(image, cmap='gray', extent=[0, W, H, 0], origin='upper')
+        ax.set_title('光场检测区域布局 (9点模式-波长组合)', fontsize=15)
         ax.set_xlabel('X (像素)', fontsize=12)
         ax.set_ylabel('Y (像素)', fontsize=12)
-        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.grid(True, linestyle='--', alpha=0.7)
         
-        # 添加信息文本
+        # 添加图例
+        legend_elements = []
+        for i in range(num_modes):
+            legend_elements.append(plt.Line2D([0], [0], marker='s', color='w', 
+                                            markerfacecolor=plt.cm.tab10(i % 10), 
+                                            markersize=15, label=mode_labels[i]))
+        ax.legend(handles=legend_elements, loc='upper right', title='模式')
+        
+        # 添加配置信息
         info_text = (
             f"检测器配置:\n"
-            f"- 字段大小: {H}×{W} 像素\n"
-            f"- 检测器数量: {len(regions)}\n"
-            f"- 圆形半径: {radius} 像素\n"
-            f"- 正方形尺寸: {detectsize}×{detectsize} 像素\n"
-            f"- 像素大小: {self.config.pixel_size*1e6:.2f} μm"
+            f"- 场大小: {H}×{W} 像素\n"
+            f"- 总区域数: {len(regions)}\n"
+            f"- 波长数: {num_wavelengths}\n"
+            f"- 模式数: {num_modes}\n"
+            f"- 像素尺寸: {self.config.pixel_size*1e6:.2f} μm"
         )
-        ax.text(0.02, 0.02, info_text, transform=ax.transAxes, fontsize=10,
-               bbox=dict(facecolor='white', alpha=0.7, boxstyle='round'))
-        
-        # 计算覆盖率
-        coverage = np.zeros((H, W))
-        for x_start, x_end, y_start, y_end in regions:
-            coverage[y_start:y_end, x_start:x_end] = 1
-        coverage_ratio = np.sum(coverage) / (H * W) * 100
-        
-        ax.set_title(f'检测器布局 (覆盖率: {coverage_ratio:.2f}%)', fontsize=14)
-        
-        # 打印检测器区域信息
-        print("\n检测器区域详情 (x_start, x_end, y_start, y_end):")
-        for i, region in enumerate(regions):
-            x_start, x_end, y_start, y_end = region
-            center_x = (x_start + x_end) // 2
-            center_y = (y_start + y_end) // 2
-            print(f"检测器 {i+1}: x[{x_start}:{x_end}], y[{y_start}:{y_end}]")
-            print(f"    中心点: ({center_x}, {center_y})")
-            print(f"    尺寸: {x_end-x_start}×{y_end-y_start} 像素")
-            print(f"    物理尺寸: {(x_end-x_start)*self.config.pixel_size*1e6:.2f}×{(y_end-y_start)*self.config.pixel_size*1e6:.2f} μm")
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
+            va='top', bbox=dict(facecolor='white', alpha=0.7, boxstyle='round'))
         
         # 保存图像
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"检测器区域图已保存至: {save_path}")
+            print(f"检测区域布局图已保存至: {save_path}")
         
+        plt.tight_layout()
         plt.show()
         
         return regions
+
 
     def plot_training_losses(self, losses, num_layer_options):
         """
@@ -602,9 +592,11 @@ class Visualizer:
         
         plt.show()
 
+
+
     def plot_energy_distribution(self, all_weights_pred, num_layer_option):
         """
-        绘制双波长双模式的能量分布热图
+        绘制波长-模式的能量分布热图（简化版）
         
         参数:
         all_weights_pred: 列表，包含不同层数模型的预测权重
@@ -619,16 +611,14 @@ class Visualizer:
         first_model = all_weights_pred[0]
         num_wavelengths = first_model.shape[0]  # 波长数
         num_modes = first_model.shape[1] if len(first_model.shape) > 1 else 1  # 模式数
-        num_detectors = first_model.shape[2] if len(first_model.shape) > 2 else first_model.shape[1]  # 探测器数
         
-        print(f"检测到的维度: 波长数={num_wavelengths}, 模式数={num_modes}, 探测器数={num_detectors}")
+        print(f"检测到的维度: 波长数={num_wavelengths}, 模式数={num_modes}")
         
         # 创建图表布局 - 行数为波长数，列数为不同层数
-        # 移除 constrained_layout=True 参数
         fig, axes = plt.subplots(num_wavelengths, len(num_layer_option), 
                                 figsize=(5 * len(num_layer_option), 5 * num_wavelengths))
         
-        # 如果只有一个波长或一个层数选项，确保axes是二维数组
+        # 确保axes是二维数组
         if num_wavelengths == 1 and len(num_layer_option) == 1:
             axes = np.array([[axes]])
         elif num_wavelengths == 1:
@@ -650,19 +640,25 @@ class Visualizer:
                 print(f"\n评估 {wavelength_labels[w_idx]} 波长下的 {num_layer} 层ODNN...\n")
                 
                 # 获取当前模型在当前波长下的权重预测
-                current_weights_pred = all_weights_pred[m_idx][w_idx]
+                current_weights_pred = all_weights_pred[m_idx][w_idx]  # [模式数]
                 
                 # 检查当前权重的维度
                 print(f"当前权重形状: {current_weights_pred.shape}")
                 
-                # 适应不同的数据结构
-                if len(current_weights_pred.shape) == 1:
-                    # 如果是一维数组，重塑为 [1, N] 形式
-                    current_weights_pred = current_weights_pred.reshape(1, -1)
+                # 如果数据仍有探测器维度，需要压缩
+                if len(current_weights_pred.shape) > 1 and current_weights_pred.shape[-1] > num_modes:
+                    # 可以选择多种方式压缩:
+                    # 1. 使用对角线元素(假设模式i应该主要影响探测器i)
+                    if current_weights_pred.shape[0] == current_weights_pred.shape[1]:
+                        simplified_weights = np.diagonal(current_weights_pred)
+                    # 2. 对每行取最大值(每个模式的最大响应)
+                    else:
+                        simplified_weights = np.max(current_weights_pred, axis=1)
+                    
+                    current_weights_pred = simplified_weights
                 
-                # 行归一化 - 确保每个输入模式的能量分布总和为1
-                row_sums = np.sum(current_weights_pred, axis=1, keepdims=True)
-                normalized_weights = current_weights_pred / (row_sums + 1e-10)  # 避免除零
+                # 转为行向量以便绘制热图
+                normalized_weights = current_weights_pred.reshape(1, -1)
                 
                 # 使用二维索引访问子图
                 ax = axes[w_idx, m_idx]
@@ -674,15 +670,14 @@ class Visualizer:
                 if w_idx == 0:
                     ax.set_title(f'{num_layer} Layers')
                 if m_idx == 0:
-                    ax.set_ylabel(f'{wavelength_labels[w_idx]}\nDetector Regions')
+                    ax.set_ylabel(f'{wavelength_labels[w_idx]}\nResponse')
                 if w_idx == num_wavelengths - 1:
-                    ax.set_xlabel('Detector Index')
+                    ax.set_xlabel('Mode Index')
                 
                 # 设置刻度
                 ax.set_xticks(np.arange(normalized_weights.shape[1]))
                 ax.set_xticklabels(np.arange(1, normalized_weights.shape[1] + 1))
-                ax.set_yticks(np.arange(normalized_weights.shape[0]))
-                ax.set_yticklabels(np.arange(1, normalized_weights.shape[0] + 1))
+                ax.set_yticks([])  # 不显示y轴刻度
                 
                 # 网格的百分比标注
                 for i in range(normalized_weights.shape[0]):
@@ -693,33 +688,101 @@ class Visualizer:
                         ax.text(j, i, f"{value:.1f}", ha='center', va='center', 
                                 color=text_color, fontsize=10, fontweight='bold')
                 
-                # 计算可见度 (对角线元素平均值)
-                if normalized_weights.shape[0] == normalized_weights.shape[1]:
-                    # 只有在矩阵是方形时才计算对角线可见度
-                    visibility = np.mean(np.diag(normalized_weights))
-                else:
-                    # 否则使用最大值和最小值计算可见度
+                # 计算可见度 (最大值和最小值的对比)
+                if normalized_weights.size > 1:
                     visibility = (np.max(normalized_weights) - np.min(normalized_weights)) / (np.max(normalized_weights) + np.min(normalized_weights) + 1e-10)
-                
-                visibility_list.append(visibility)
-                
-                # 在图上显示可见度
-                ax.text(0.5, -0.15, f"Visibility: {visibility:.3f}", transform=ax.transAxes,
-                        ha='center', va='center', fontsize=9)
-                
-                print(f'Visibility for {wavelength_labels[w_idx]}, {num_layer} layers: {visibility:.3f}')
+                    visibility_list.append(visibility)
+                    
+                    # 在图上显示可见度
+                    ax.text(0.5, -0.15, f"Visibility: {visibility:.3f}", transform=ax.transAxes,
+                            ha='center', va='center', fontsize=9)
+                    
+                    print(f'Visibility for {wavelength_labels[w_idx]}, {num_layer} layers: {visibility:.3f}')
         
         # 添加共享颜色条
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
+        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
         cbar = fig.colorbar(im, cax=cbar_ax)
         cbar.set_label("Normalized Energy")
         
         # 设置总标题
-        fig.suptitle("Energy Distribution per Layer (Row-normalized, in %)", fontsize=16, y=0.98)
+        fig.suptitle("Energy Distribution per Layer", fontsize=16, y=0.98)
         
-        # 调整布局 - 使用 plt.subplots_adjust 而不是 tight_layout
+        # 调整布局
         plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1, wspace=0.3, hspace=0.3)
         
         return fig, visibility_list
 
 
+
+    def plot_visibility_comparison_by_mode_wavelength(self, visibility_data, num_layer_options, wavelengths=None):
+        """
+        绘制不同模式在不同波长下的可见度比较图
+        
+        参数:
+            visibility_data: 三维数组，形状为 [模式数, 波长数, 层数]
+            num_layer_options: 层数选项列表
+            wavelengths: 波长列表（单位：纳米），如果为None则使用默认标签
+        """
+        num_modes = visibility_data.shape[0]
+        num_wavelengths = visibility_data.shape[1]
+        
+        # 如果没有提供波长，则使用默认标签
+        if wavelengths is None:
+            wavelength_labels = [f'λ{i+1}' for i in range(num_wavelengths)]
+        else:
+            wavelength_labels = [f'{wl*1e9:.0f}nm' for wl in wavelengths]
+        
+        # 创建子图网格：每个模式一行，每个波长一列
+        fig, axes = plt.subplots(num_modes, num_wavelengths, figsize=(4*num_wavelengths, 3*num_modes), 
+                                sharex=True, sharey=True)
+        
+        # 确保axes是二维数组
+        if num_modes == 1 and num_wavelengths == 1:
+            axes = np.array([[axes]])
+        elif num_modes == 1:
+            axes = axes.reshape(1, -1)
+        elif num_wavelengths == 1:
+            axes = axes.reshape(-1, 1)
+        
+        # 为条形图准备x轴位置
+        x = np.arange(len(num_layer_options))
+        
+        # 绘制每个子图
+        for mode_idx in range(num_modes):
+            for wl_idx in range(num_wavelengths):
+                ax = axes[mode_idx, wl_idx]
+                
+                # 获取当前模式和波长的可见度数据
+                vis_data = visibility_data[mode_idx, wl_idx]
+                
+                # 绘制条形图
+                bars = ax.bar(x, vis_data, width=0.6, color=f'C{mode_idx}', alpha=0.8)
+                
+                # 添加数值标签
+                for bar_idx, bar in enumerate(bars):
+                    height = bar.get_height()
+                    ax.text(bar.get_x() + bar.get_width()/2., height + 0.02,
+                            f'{height:.2f}', ha='center', va='bottom', fontsize=9)
+                
+                # 设置标题和标签
+                if mode_idx == 0:
+                    ax.set_title(f'{wavelength_labels[wl_idx]}', fontsize=12)
+                if wl_idx == 0:
+                    ax.set_ylabel(f'Mode {mode_idx+1}\nVisibility', fontsize=12)
+                if mode_idx == num_modes-1:
+                    ax.set_xlabel('Layers', fontsize=10)
+                    ax.set_xticks(x)
+                    ax.set_xticklabels([f'{layers}' for layers in num_layer_options])
+                
+                # 设置y轴范围为0-1
+                ax.set_ylim(0, 1.05)
+                ax.grid(True, linestyle='--', alpha=0.7, axis='y')
+        
+        # 添加总标题
+        plt.suptitle('Visibility Comparison by Mode and Wavelength', fontsize=16, y=0.98)
+        
+        # 调整布局
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.show()
+        
+        return fig

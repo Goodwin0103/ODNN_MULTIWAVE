@@ -409,21 +409,19 @@ class WavelengthDependentPropagation(nn.Module):
         # 合并所有批次
         return torch.cat(results, dim=0)
 
-class RegressionDetector(nn.Module):
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """计算光场强度"""
-        return torch.square(torch.abs(inputs))
-
 class MultiModeMultiWavelengthModel(nn.Module):
     def __init__(self, config, num_layers):
         super().__init__()
         
-        # 使用模式模式波长依赖的衍射层
+        # 使用物理原理的多波长衍射层
         self.layers = nn.ModuleList([
-            ModeModeWavelengthDependentDiffractionLayer(
-                config.layer_size, config.pixel_size,
-                config.wavelengths, config.z_layers, 
-                config.num_modes, layer_idx=i
+            PhysicsBasedMultiWavelengthLayer(
+                config.layer_size, 
+                config.pixel_size,
+                config.wavelengths, 
+                config.z_layers,
+                config.num_modes, 
+                layer_idx=i
             ) for i in range(num_layers)
         ])
         
@@ -435,107 +433,162 @@ class MultiModeMultiWavelengthModel(nn.Module):
         self.config = config
     
     def forward(self, x):
-        # 输入形状: [B, C, H, W]
-        # B - 批次大小 (等于模式数量)
-        # C - 波长通道数
+        """
+        前向传播
         
+        参数:
+            x: 输入光场，形状为 [B, C, H, W]
+               B - 批次大小 (可以是模式数量)
+               C - 波长通道数
+               H, W - 空间分辨率
+        """
         # 通过所有衍射层
         for layer in self.layers:
             x = layer(x)
         
         # 最终传播和探测
         x = self.final_propagation(x)
-        x = self.detector(x)
+        output = self.detector(x)
         
-        return x
+        return output
     
     def get_all_phase_masks(self):
-        """获取所有层的模式特定掩膜"""
+        """获取所有相位掩膜（仅用于可视化和分析）"""
         all_masks = []
-        for layer in self.layers:
-            all_masks.append(layer.get_mode_specific_phase_masks())
-        return all_masks
-
-    def print_phase_masks(self, save_path=None):
-        """
-        打印并可选保存相位掩膜信息
-        
-        参数:
-            save_path (str, optional): 保存相位掩膜图像的路径
-        """
-        if save_path:
-            os.makedirs(save_path, exist_ok=True)
-        
-        # 获取所有相位掩膜
-        phase_masks = []
-        for name, param in self.named_parameters():
-            if 'phase_mask' in name:
-                phase_masks.append((name, param.detach().cpu().numpy()))
-        
-        print(f"找到 {len(phase_masks)} 个相位掩膜参数")
-        
-        # 首先打印所有找到的相位掩膜参数名称，以便调试
-        if phase_masks:
-            print("相位掩膜参数名称:")
-            for name, _ in phase_masks:
-                print(f"  - {name}")
-        else:
-            print("未找到任何相位掩膜参数")
-            return
-        
-        # 尝试按层数排序，使用更灵活的方式提取层数
-        try:
-            # 尝试不同的正则表达式模式
-            patterns = [
-                r'phase_mask_(\d+)',  # 标准格式 phase_mask_1
-                r'phase_mask.*?(\d+)', # 任何包含phase_mask和数字的格式
-                r'.*?(\d+).*?phase_mask', # 数字在phase_mask之前
-                r'.*?phase_mask.*?(\d+)' # 任何位置的数字
-            ]
-            
-            def extract_layer_num(name):
-                for pattern in patterns:
-                    match = re.search(pattern, name)
-                    if match:
-                        return int(match.group(1))
-                # 如果没有匹配的模式，返回参数名称的哈希值作为排序依据
-                return hash(name) % 10000
-            
-            phase_masks.sort(key=lambda x: extract_layer_num(x[0]))
-        except Exception as e:
-            print(f"排序时出错: {e}")
-            print("将按原始顺序显示相位掩膜")
-        
-        # 打印相位掩膜信息并保存图像
-        for i, (name, mask) in enumerate(phase_masks):
-            try:
-                # 尝试提取层索引，如果失败则使用序号
-                layer_idx = "未知"
-                for pattern in patterns:
-                    match = re.search(pattern, name)
-                    if match:
-                        layer_idx = match.group(1)
-                        break
-                if layer_idx == "未知":
-                    layer_idx = str(i+1)
-                    
-                print(f"层 {layer_idx} 相位掩膜 (参数名: {name}):")
+        for i, layer in enumerate(self.layers):
+            # 获取每个波长的有效相位掩膜
+            wavelength_masks = layer.get_effective_phase_masks()
+            for j, mask in enumerate(wavelength_masks):
+                all_masks.append(mask)
+                print(f"层 {i} 相位掩膜 {j} (对应波长 {self.config.wavelengths[j]*1e9:.1f}nm):")
                 print(f"  形状: {mask.shape}")
                 print(f"  范围: [{mask.min():.4f}, {mask.max():.4f}]")
                 print(f"  平均值: {mask.mean():.4f}")
                 print(f"  标准差: {mask.std():.4f}")
-                
-                if save_path:
-                    plt.figure(figsize=(10, 8))
-                    plt.imshow(mask, cmap='viridis')
-                    plt.colorbar(label='Phase (rad)')
-                    plt.title(f'Phase Mask - Layer {layer_idx} ({name})')
-                    plt.savefig(f"{save_path}/phase_mask_layer_{layer_idx}.png", dpi=300)
-                    plt.close()
-                    
-                    # 保存原始数据
-                    np.save(f"{save_path}/phase_mask_layer_{layer_idx}.npy", mask)
-            except Exception as e:
-                print(f"处理相位掩膜 {name} 时出错: {e}")
+        return all_masks
+    
+    def print_phase_masks(self, save_path=None):
+        """打印所有层的相位掩膜"""
+        print("\n====== 模型所有相位掩膜信息 ======")
         
-        print(f"共有 {len(phase_masks)} 个相位掩膜")
+        for i, layer in enumerate(self.layers):
+            # 获取每个波长的有效相位掩膜
+            wavelength_masks = layer.get_effective_phase_masks()
+            
+            print(f"\n== 层 {i} 相位掩膜信息 ==")
+            print(f"基础相位掩膜形状: {wavelength_masks[0].shape}")
+            print(f"基础相位掩膜范围: [{np.min(wavelength_masks[0]):.4f}, {np.max(wavelength_masks[0]):.4f}]")
+            print(f"波长系数: {layer.wavelength_coefficients.detach().cpu().numpy()}")
+            
+            # 创建图形
+            n_wavelengths = len(self.config.wavelengths)
+            fig, axes = plt.subplots(1, n_wavelengths, figsize=(5*n_wavelengths, 5))
+            
+            # 如果只有一个波长，确保axes是列表
+            if n_wavelengths == 1:
+                axes = [axes]
+            
+            # 绘制每个波长的相位掩膜
+            for j, (mask, wl) in enumerate(zip(wavelength_masks, self.config.wavelengths)):
+                im = axes[j].imshow(mask, cmap='viridis')
+                axes[j].set_title(f"Wavelength {wl*1e9:.1f}nm\nCoef: {layer.wavelength_coefficients[j].item():.4f}")
+                plt.colorbar(im, ax=axes[j], label='Phase (rad)')
+            
+            plt.tight_layout()
+            
+            if save_path:
+                plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
+                print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
+            else:
+                plt.show()
+
+
+class PhysicsBasedMultiWavelengthLayer(nn.Module):
+    def __init__(self, units, pixel_size, wavelengths, z_distance, num_modes, layer_idx=0):
+        super().__init__()
+        
+        self.units = units
+        self.pixel_size = pixel_size
+        self.wavelengths = wavelengths
+        self.z_distance = z_distance
+        self.num_modes = num_modes
+        self.layer_idx = layer_idx
+        
+        # 基础相位掩膜 - 减小初始范围
+        self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
+        
+        # 设置基准波长索引（假设550nm是第二个波长）
+        self.base_wavelength_idx = 1  # 假设wavelengths=[450nm, 550nm, 650nm]
+        
+        # 根据物理规律计算初始波长系数
+        # 波长系数与波长成反比：550nm/λ
+        base_wavelength = wavelengths[self.base_wavelength_idx]
+        wavelength_ratios = [base_wavelength/wl for wl in wavelengths]
+        
+        # 可学习的波长系数，初始化为物理理论值
+        self.wavelength_coefficients = nn.Parameter(
+            torch.tensor(wavelength_ratios, dtype=torch.float32)
+        )
+        
+        # 层深度衰减因子
+        self.depth_factor = 1 ** layer_idx  # 深层使用更小的调制
+        
+        # 初始化传播器
+        self.propagator = WavelengthDependentPropagation(
+            pixel_size, wavelengths, z_distance
+        )
+    
+    def forward(self, x):
+        """
+        前向传播
+        
+        参数:
+            x: 输入光场，形状为 [B, C, H, W]
+               B - 批次大小
+               C - 波长通道数
+               H, W - 空间分辨率
+        """
+        batch_size, num_wavelengths, height, width = x.shape
+        
+        # 确保波长数量匹配
+        assert num_wavelengths == len(self.wavelengths), \
+            f"输入波长通道数 {num_wavelengths} 与配置的波长数 {len(self.wavelengths)} 不匹配"
+        
+        # 分别处理每个波长
+        outputs = []
+        for i in range(num_wavelengths):
+            # 获取当前波长的光场
+            field = x[:, i:i+1, :, :]  # 保持维度 [B, 1, H, W]
+            
+            # 计算当前波长的有效相位掩膜
+            coefficient = self.wavelength_coefficients[i]
+            effective_phase = self.phase * coefficient * self.depth_factor
+            
+            # 应用对应波长的相位掩膜
+            field = field * torch.exp(1j * effective_phase)
+            
+            outputs.append(field)
+        
+        # 合并所有波长的结果
+        combined = torch.cat(outputs, dim=1)
+        
+        # 传播
+        propagated = self.propagator(combined)
+        
+        return propagated
+    
+    def get_effective_phase_masks(self):
+        """获取每个波长的有效相位掩膜（用于可视化和分析）"""
+        effective_phases = []
+        
+        for i, wl in enumerate(self.wavelengths):
+            # 根据波长系数调整基础相位
+            coefficient = self.wavelength_coefficients[i]
+            effective_phase = self.phase * coefficient * self.depth_factor
+            
+            # 转换为NumPy数组用于返回
+            phase_np = effective_phase.detach().cpu().numpy()
+            effective_phases.append(phase_np)
+        
+        return effective_phases
+
