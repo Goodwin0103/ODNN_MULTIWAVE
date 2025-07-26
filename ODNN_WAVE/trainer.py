@@ -100,27 +100,37 @@ class Trainer:
                 # 处理每个波长的预测
                 weights_batch = []
                 for c in range(min(C, len(self.config.wavelengths))):
-                    chan = predictions[:, c]
+                    chan = predictions[:, c]  # 形状: [批次, H, W]
                     energies = []
-                    # 使用所有评估区域
-                    for region_idx, region in enumerate(self.evaluation_regions):
-                        xs, xe, ys, ye = region
-                        region_sum = chan[:, ys:ye, xs:xe].sum(dim=(-2, -1))
-                        energies.append(region_sum)
-                    energies = torch.stack(energies, dim=1)
+                    
+                    # 使用掩码数组计算区域能量
+                    for region_idx, region_mask in enumerate(self.evaluation_regions):
+                        # 确保region_mask是tensor且在正确设备上
+                        if isinstance(region_mask, np.ndarray):
+                            region_mask = torch.from_numpy(region_mask).to(device)
+                        elif isinstance(region_mask, torch.Tensor):
+                            region_mask = region_mask.to(device)
+                        
+                        # 计算区域内的能量总和
+                        # chan: [批次, H, W], region_mask: [H, W]
+                        region_energy = (chan * region_mask.float()).sum(dim=(-2, -1))
+                        energies.append(region_energy)
+                    
+                    energies = torch.stack(energies, dim=1)  # [批次, 区域数]
                     weights_batch.append(energies)
                 
-                # 重新排列维度: [波长, 批次, 评估区域]
+                # 重新排列维度: [波长, 批次, 区域数]
                 weights_batch = torch.stack(weights_batch, dim=0)
                 all_weights_pred.append(weights_batch.cpu())
         
         # 合并批次维度
         weights_pred = torch.cat(all_weights_pred, dim=1).numpy()
         
-        # 计算可见度 - 考虑多模式多波长
+        # 计算可见度
         visibility = self._calculate_visibility(weights_pred)
         
         return {'weights_pred': weights_pred, 'visibility': visibility}
+
 
     def _calculate_visibility(self, weights):
         """返回每个模式的可见度"""
@@ -194,3 +204,141 @@ class Trainer:
             results['visibility'].append(mode_visibilities)
             
         return results
+
+
+# 在 trainer.py 文件中添加以下类
+
+class ImprovedMultiWavelengthTrainer:
+    """改进的多波长训练器"""
+    
+    def __init__(self, model, train_loader, criterion, optimizer, device, 
+                 evaluation_regions, wavelengths, num_modes):
+        self.model = model
+        self.train_loader = train_loader
+        self.criterion = criterion
+        self.optimizer = optimizer
+        self.device = device
+        self.evaluation_regions = evaluation_regions
+        self.wavelengths = wavelengths
+        self.num_modes = num_modes
+        
+        # 训练历史
+        self.losses = []
+        self.detailed_losses = {'mse': [], 'separation': [], 'focus': [], 'total': []}
+        
+        # 学习率调度器
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=50, verbose=True
+        )
+        
+        # 早停机制
+        self.best_loss = float('inf')
+        self.patience_counter = 0
+        self.early_stop_patience = 100
+        
+        print(f"📚 改进训练器初始化完成")
+        print(f"  - 波长数: {len(wavelengths)}")
+        print(f"  - 模式数: {num_modes}")
+        print(f"  - 评估区域数: {len(evaluation_regions)}")
+    
+    def train(self, epochs):
+        """改进的训练循环"""
+        print(f"🚀 开始训练 {epochs} 轮...")
+        
+        self.model.train()
+        
+        for epoch in range(epochs):
+            epoch_losses = {'mse': 0, 'separation': 0, 'focus': 0, 'total': 0}
+            batch_count = 0
+            
+            for batch_input, batch_target in self.train_loader:
+                batch_input = batch_input.to(self.device)
+                batch_target = batch_target.to(self.device)
+                
+                self.optimizer.zero_grad()
+                
+                # 前向传播
+                output = self.model(batch_input)
+                
+                # 计算损失
+                if hasattr(self.criterion, '__call__') and len(self.criterion(output, batch_target)) == 2:
+                    loss, loss_components = self.criterion(output, batch_target)
+                    
+                    # 记录详细损失
+                    for key, value in loss_components.items():
+                        epoch_losses[key] += value
+                else:
+                    loss = self.criterion(output, batch_target)
+                    epoch_losses['total'] += loss.item()
+                
+                # 反向传播
+                loss.backward()
+                
+                # 梯度裁剪
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                
+                self.optimizer.step()
+                batch_count += 1
+            
+            # 计算平均损失
+            for key in epoch_losses:
+                avg_loss = epoch_losses[key] / batch_count
+                epoch_losses[key] = avg_loss
+                self.detailed_losses[key].append(avg_loss)
+            
+            avg_total_loss = epoch_losses['total']
+            self.losses.append(avg_total_loss)
+            
+            # 学习率调度
+            self.scheduler.step(avg_total_loss)
+            
+            # 早停检查
+            if avg_total_loss < self.best_loss:
+                self.best_loss = avg_total_loss
+                self.patience_counter = 0
+            else:
+                self.patience_counter += 1
+            
+            if self.patience_counter >= self.early_stop_patience:
+                print(f"⏹️ 早停触发在第 {epoch} 轮")
+                break
+            
+            # 打印进度
+            if epoch % 50 == 0:
+                current_lr = self.optimizer.param_groups[0]['lr']
+                print(f'Epoch [{epoch:3d}/{epochs}] - '
+                      f'总损失: {avg_total_loss:.6f}, '
+                      f'MSE: {epoch_losses.get("mse", 0):.6f}, '
+                      f'分离: {epoch_losses.get("separation", 0):.6f}, '
+                      f'聚焦: {epoch_losses.get("focus", 0):.6f}, '
+                      f'学习率: {current_lr:.2e}')
+        
+        print(f"✅ 训练完成! 最佳损失: {self.best_loss:.6f}")
+        return self.losses
+    
+    def evaluate_energy_distribution(self):
+        """评估能量分布"""
+        print("📊 评估能量分布...")
+        
+        self.model.eval()
+        with torch.no_grad():
+            # 获取样本数据
+            sample_input, _ = next(iter(self.train_loader))
+            sample_input = sample_input.to(self.device)
+            
+            # 前向传播
+            output = self.model(sample_input)
+            
+            # 计算区域能量
+            weights = torch.zeros(len(self.wavelengths), self.num_modes, len(self.evaluation_regions))
+            
+            for wl_idx in range(len(self.wavelengths)):
+                for mode_idx in range(self.num_modes):
+                    intensity = torch.abs(output[:, wl_idx, mode_idx])**2
+                    
+                    for region_idx, region_mask in enumerate(self.evaluation_regions):
+                        region_mask = torch.tensor(region_mask, device=self.device, dtype=torch.float32)
+                        region_energy = torch.sum(intensity * region_mask, dim=(1, 2))
+                        weights[wl_idx, mode_idx, region_idx] = torch.mean(region_energy)
+            
+            return weights.cpu().numpy()

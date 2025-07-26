@@ -162,6 +162,21 @@ class DataGenerator:
         
         return labels
 
+    def verify_wavelength_mapping(self):
+        """验证波长索引映射"""
+        print("\n=== 波长索引映射验证 ===")
+        for wl_idx, wavelength in enumerate(self.wavelengths):
+            print(f"索引 {wl_idx}: {wavelength*1e9:.0f}nm")
+        
+        # 确保450nm->0, 550nm->1, 650nm->2
+        expected_mapping = {0: 450e-9, 1: 550e-9, 2: 650e-9}
+        for idx, expected_wl in expected_mapping.items():
+            if idx < len(self.wavelengths):
+                actual_wl = self.wavelengths[idx]
+                match = abs(expected_wl - actual_wl) < 1e-12
+                status = "✓" if match else "✗"
+                print(f"索引 {idx}: 预期 {expected_wl*1e9:.0f}nm, 实际 {actual_wl*1e9:.0f}nm {status}")
+
 
 import torch
 import numpy as np
@@ -180,13 +195,31 @@ class Config:
         self.focus_radius = kwargs.get('focus_radius', 5)  # 标签中聚焦点的半径
         self.offsets = kwargs.get('offsets', [(0,0) for _ in range(len(self.wavelengths))])
 
-class MultiModeMultiWavelengthDataGenerator:
-    def __init__(self, config):
-        self.config = config
-        self.visibility_value = 0.0
-        self.training_losses = []
-        self.modes = None  # 存储加载的模式数据
-
+class MultiWavelengthDataGenerator:
+    def __init__(self, input_field, labels, evaluation_regions, batch_size=32, use_improved_labels=True):
+        """
+        Args:
+            use_improved_labels: 是否使用改进的标签
+        """
+        self.input_field = input_field
+        self.evaluation_regions = evaluation_regions
+        self.batch_size = batch_size
+        self.use_improved_labels = use_improved_labels
+        
+        # 根据选项使用不同的标签
+        if use_improved_labels:
+            print("📊 使用改进的标签生成...")
+            # 这里可以调用改进的标签生成函数
+            self.labels = labels  # 假设外部已经传入改进的标签
+        else:
+            print("📊 使用原始标签...")
+            self.labels = labels
+        
+        print(f"数据生成器初始化:")
+        print(f"  - 输入场形状: {self.input_field.shape}")
+        print(f"  - 标签形状: {self.labels.shape}")
+        print(f"  - 批次大小: {batch_size}")
+        print(f"  - 改进标签: {use_improved_labels}")
     def load_mmf_data(self) -> torch.Tensor:
         """加载MMF数据并进行预处理"""
         eigenmodes_OM4 = np.load('eigenmodes_OM4.npy')

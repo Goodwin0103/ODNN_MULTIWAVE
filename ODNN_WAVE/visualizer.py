@@ -786,3 +786,149 @@ class Visualizer:
         plt.show()
         
         return fig
+   
+
+    def plot_energy_by_mode_wavelength(self, weights_pred, num_layers_list, save_path=None):
+        """
+        按模式和波长分析能量分布
+        
+        参数:
+        - weights_pred: 预测权重列表，每个元素形状为 (波长数, 模式数, 区域数)
+        - num_layers_list: 对应的层数列表
+        - save_path: 可选的保存路径
+        """
+        results = {}
+        
+        for model_idx, num_layers in enumerate(num_layers_list):
+            print(f"分析 {num_layers} 层模型的能量分布...")
+            
+            # 获取当前模型的权重
+            current_weights = weights_pred[model_idx]
+            
+            # 打印权重形状以便调试
+            print(f"当前模型权重形状: {current_weights.shape}")
+            
+            # 确保权重维度正确
+            if len(current_weights.shape) != 3:
+                print(f"警告: 权重维度不是预期的3维 (波长, 模式, 区域), 实际是 {len(current_weights.shape)}维")
+                continue
+                
+            num_wavelengths, num_modes, num_regions = current_weights.shape
+            
+            # 确保模式数和波长数与配置一致
+            expected_modes = self.config.num_modes
+            expected_wavelengths = len(self.config.wavelengths)
+            
+            if num_modes != expected_modes or num_wavelengths != expected_wavelengths:
+                print(f"警告: 模式数或波长数与配置不一致")
+                print(f"预期: {expected_modes}模式, {expected_wavelengths}波长")
+                print(f"实际: {num_modes}模式, {num_wavelengths}波长")
+            
+            # 计算每个模式在每个波长下的能量
+            mode_wavelength_energy = np.zeros((num_modes, num_wavelengths))
+            
+            for mode_idx in range(num_modes):
+                for wl_idx in range(num_wavelengths):
+                    # 获取当前模式在当前波长下的所有区域能量
+                    energy = current_weights[wl_idx][mode_idx]
+                    
+                    # 计算总能量
+                    total_energy = np.sum(energy)
+                    mode_wavelength_energy[mode_idx, wl_idx] = total_energy
+            
+            # 存储结果
+            results[num_layers] = {
+                'energy_distribution': mode_wavelength_energy.copy()
+            }
+            
+            # 可视化能量分布
+            plt.figure(figsize=(10, 6))
+            im = plt.imshow(mode_wavelength_energy, cmap='viridis', aspect='auto')
+            plt.colorbar(im, label='总能量')
+            plt.title(f'{num_layers}层模型的模式-波长能量分布')
+            plt.xlabel('波长')
+            plt.ylabel('模式')
+            
+            # 设置坐标轴标签
+            wavelength_labels = [f'{wl*1e9:.0f} nm' for wl in self.config.wavelengths]
+            mode_labels = [f'模式 {m+1}' for m in range(num_modes)]
+            
+            plt.xticks(range(num_wavelengths), wavelength_labels)
+            plt.yticks(range(num_modes), mode_labels)
+            
+            # 在每个单元格中显示数值
+            for i in range(num_modes):
+                for j in range(num_wavelengths):
+                    plt.text(j, i, f'{mode_wavelength_energy[i, j]:.3f}', 
+                            ha='center', va='center', 
+                            color='white' if mode_wavelength_energy[i, j] > np.mean(mode_wavelength_energy) else 'black')
+            
+            # 保存图像
+            if save_path:
+                save_file = f"{save_path}/energy_distribution_{num_layers}_layers.png"
+                plt.savefig(save_file, dpi=300, bbox_inches='tight')
+                print(f"能量分布图已保存至: {save_file}")
+            
+            plt.tight_layout()
+            plt.show()
+        
+        # 比较不同层数模型的能量分布
+        if len(num_layers_list) > 1:
+            self._plot_energy_comparison(results, num_layers_list, save_path)
+        
+        return results
+
+    def _plot_energy_comparison(self, results, num_layers_list, save_path=None):
+        """比较不同层数模型的能量分布"""
+        # 提取所有模型的能量分布
+        all_energy = [results[num_layers]['energy_distribution'] for num_layers in num_layers_list]
+        
+        # 计算平均能量
+        avg_energy = np.mean([energy.sum() for energy in all_energy])
+        
+        # 创建子图
+        fig, axes = plt.subplots(1, len(num_layers_list), figsize=(5*len(num_layers_list), 5))
+        
+        # 确保axes是数组
+        if len(num_layers_list) == 1:
+            axes = [axes]
+        
+        # 绘制每个模型的能量分布
+        for i, num_layers in enumerate(num_layers_list):
+            energy = results[num_layers]['energy_distribution']
+            im = axes[i].imshow(energy, cmap='viridis', vmin=0, vmax=np.max(all_energy))
+            axes[i].set_title(f'{num_layers}层')
+            
+            # 设置坐标轴标签
+            if i == 0:
+                axes[i].set_ylabel('模式')
+            
+            axes[i].set_xlabel('波长')
+            axes[i].set_xticks(range(energy.shape[1]))
+            axes[i].set_xticklabels([f'{wl*1e9:.0f}' for wl in self.config.wavelengths], rotation=45)
+            axes[i].set_yticks(range(energy.shape[0]))
+            axes[i].set_yticklabels([f'模式{m+1}' for m in range(energy.shape[0])])
+            
+            # 添加数值标签
+            for m in range(energy.shape[0]):
+                for w in range(energy.shape[1]):
+                    axes[i].text(w, m, f'{energy[m, w]:.1f}', 
+                            ha='center', va='center',
+                            color='white' if energy[m, w] > avg_energy/2 else 'black')
+        
+        # 添加共享颜色条
+        fig.colorbar(im, ax=axes, label='能量值')
+        
+        # 设置总标题
+        fig.suptitle('不同层数模型的模式-波长能量分布比较', fontsize=16)
+        
+        # 调整布局
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        
+        # 保存图像
+        if save_path:
+            save_file = f"{save_path}/energy_distribution_comparison.png"
+            plt.savefig(save_file, dpi=300, bbox_inches='tight')
+            print(f"能量分布比较图已保存至: {save_file}")
+        
+        plt.show()

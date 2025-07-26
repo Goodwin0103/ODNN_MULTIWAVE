@@ -83,17 +83,7 @@ class Simulator:
             self._simulate_single_mode(phase_masks, input_field)
             
     def evaluate_simulation_result(self, field, mode_idx=None, wavelength_idx=None):
-        """
-        评估模拟结果在所有区域的能量分布
-        
-        参数:
-            field: 传播后的场
-            mode_idx: 输入模式索引 (可选)
-            wavelength_idx: 波长索引 (可选)
-        
-        返回:
-            各区域能量列表和最大能量区域索引
-        """
+        """评估模拟结果在所有区域的能量分布"""
         if self.evaluation_regions is None:
             print("警告: 未设置评估区域")
             return None, None
@@ -101,24 +91,49 @@ class Simulator:
         # 计算场强度
         intensity = np.abs(field)**2
         
+        # 打印强度分布统计信息
+        print(f"强度统计: 最小值={intensity.min():.6f}, 最大值={intensity.max():.6f}, 平均值={intensity.mean():.6f}")
+        
         # 计算所有区域的能量
         all_energies = evaluate_all_regions(intensity, self.evaluation_regions)
         
+        # 详细打印各区域能量
+        print(f"各区域能量分布:")
+        for i, energy in enumerate(all_energies):
+            row = i // 3
+            col = i % 3
+            print(f"  区域 {i} (行{row},列{col}): {energy:.6f}")
+        
         # 找到能量最大的区域
         max_energy_idx = np.argmax(all_energies)
+        max_energy_value = all_energies[max_energy_idx]
+        
+        # 计算能量集中度
+        total_energy = np.sum(all_energies)
+        concentration_ratio = max_energy_value / total_energy if total_energy > 0 else 0
+        
+        print(f"最大能量区域: {max_energy_idx}, 能量值: {max_energy_value:.6f}")
+        print(f"能量集中度: {concentration_ratio:.3f} ({concentration_ratio*100:.1f}%)")
         
         # 计算预期索引和实际索引
         if mode_idx is not None and wavelength_idx is not None:
-            num_wavelengths = len(self.config.wavelengths)
-            expected_idx = mode_idx * num_wavelengths + wavelength_idx
-            predicted_mode = max_energy_idx // num_wavelengths
-            predicted_wl = max_energy_idx % num_wavelengths
+            expected_idx = mode_idx * 3 + wavelength_idx
+            predicted_mode = max_energy_idx // 3
+            predicted_wl = max_energy_idx % 3
             
-            print(f"模式{mode_idx}波长{wavelength_idx}: "
-                  f"最大能量在区域{max_energy_idx} (模式{predicted_mode},波长{predicted_wl}), "
-                  f"正确: {max_energy_idx == expected_idx}")
+            wavelengths = [450, 550, 650]
+            print(f"输入: 模式{mode_idx+1}, {wavelengths[wavelength_idx]}nm -> 预期区域{expected_idx}")
+            print(f"输出: 最大能量在区域{max_energy_idx} -> 预测模式{predicted_mode+1}, {wavelengths[predicted_wl]}nm")
+            print(f"正确性: {'✓' if max_energy_idx == expected_idx else '✗'}")
+            
+            if max_energy_idx != expected_idx:
+                print(f"错误分析: 能量跑到了错误的区域")
+                # 显示预期区域的能量
+                expected_energy = all_energies[expected_idx]
+                print(f"预期区域{expected_idx}的能量: {expected_energy:.6f}")
         
         return all_energies, max_energy_idx
+
 
     def _simulate_single_mode(self, phase_masks, input_field, mode_suffix=""):
         """
