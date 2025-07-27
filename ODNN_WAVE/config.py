@@ -32,6 +32,7 @@ class Config:
     
     # 检测区域偏移 - 为每个波长定义不同的偏移
     offsets: List[Tuple[int, int]] = field(default_factory=default_offsets)  # 每个波长的检测区域偏移
+    mode_offsets: List[Tuple[int, int]] = field(default_factory=default_offsets)  # 每个波长的检测区域偏移
     
     # 训练参数
     learning_rate: float = 0.01                       # 学习率
