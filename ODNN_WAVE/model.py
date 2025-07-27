@@ -1,5 +1,3 @@
-import os
-import re
 import torch
 import torch.nn as nn
 import numpy as np
@@ -115,7 +113,27 @@ class WavelengthDependentPropagation(nn.Module):
         self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, C, H, W = x.shape
+        """
+        参数:
+            x: 形状为 [B, C, H, W] 或 [B, C, M, H, W] 的张量
+        """
+        # 检查输入形状并适应
+        input_shape = x.shape
+        print(f"WavelengthDependentPropagation 输入形状: {input_shape}")
+        
+        if len(input_shape) == 4:
+            # 形状: [批次大小, 波长数, 高度, 宽度]
+            B, C, H, W = input_shape
+            has_mode_dim = False
+        elif len(input_shape) == 5:
+            # 形状: [批次大小, 波长数, 模式数, 高度, 宽度]
+            B, C, M, H, W = input_shape
+            has_mode_dim = True
+            # 重新排列为 [批次大小 * 模式数, 波长数, 高度, 宽度]
+            x = x.reshape(B * M, C, H, W)
+            print(f"重新排列后形状: {x.shape}")
+        else:
+            raise ValueError(f"输入形状 {input_shape} 不受支持。需要 4D [B,C,H,W] 或 5D [B,C,M,H,W] 张量。")
         
         # 检查通道数与波长数量是否匹配
         if C != len(self.wavelengths):
@@ -123,18 +141,38 @@ class WavelengthDependentPropagation(nn.Module):
         
         results = []
         
-        # 分别处理每个通道
-        for c in range(min(C, len(self.wavelengths))):
-            x_c = x[:, c:c+1]
-            x_c = propagation_multi(
-                x_c, z=self.z, 
-                wavelengths=[self.lam_list[c]],  # 只传递对应通道的波长
-                pixel_size=self.dx, 
-                device=x.device
-            )
-            results.append(x_c)
+        # 分别处理每个批次
+        for b in range(x.shape[0]):
+            batch_results = []
+            
+            # 分别处理每个通道(波长)
+            for c in range(min(C, len(self.wavelengths))):
+                x_bc = x[b:b+1, c:c+1]
+                
+                # 传播
+                x_bc = propagation_multi(
+                    x_bc, z=self.z, 
+                    wavelengths=[self.lam_list[c]],
+                    pixel_size=self.dx, 
+                    device=x.device
+                )
+                
+                batch_results.append(x_bc)
+            
+            # 合并该批次的所有通道
+            batch_output = torch.cat(batch_results, dim=1)
+            results.append(batch_output)
         
-        output = torch.cat(results, dim=1)
+        # 合并所有批次
+        output = torch.cat(results, dim=0)
+        
+        # 如果有模式维度，恢复原始形状
+        if has_mode_dim:
+            output = output.reshape(B, M, C, H, W)
+            # 调整维度顺序为 [批次大小, 波长数, 模式数, 高度, 宽度]
+            output = output.permute(0, 2, 1, 3, 4)
+            print(f"恢复后形状: {output.shape}")
+        
         return output
 
 
@@ -368,47 +406,6 @@ class ModeModeWavelengthDependentDiffractionLayer(nn.Module):
         
         return mode_masks
 
-class WavelengthDependentPropagation(nn.Module):
-    def __init__(self, dx: float, wavelengths: np.ndarray, z: float):
-        super().__init__()
-        self.dx = dx
-        self.wavelengths = wavelengths
-        self.z = z
-        self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        参数:
-            x: 形状为 [B, C, H, W] 的张量
-        """
-        B, C, H, W = x.shape
-        results = []
-        
-        # 分别处理每个批次(模式)
-        for b in range(B):
-            batch_results = []
-            
-            # 分别处理每个通道(波长)
-            for c in range(C):
-                x_bc = x[b:b+1, c:c+1]
-                
-                # 传播
-                x_bc = propagation_multi(
-                    x_bc, z=self.z, 
-                    wavelengths=[self.lam_list[c]],
-                    pixel_size=self.dx, 
-                    device=x.device
-                )
-                
-                batch_results.append(x_bc)
-            
-            # 合并该批次的所有通道
-            batch_output = torch.cat(batch_results, dim=1)
-            results.append(batch_output)
-        
-        # 合并所有批次
-        return torch.cat(results, dim=0)
-
 class MultiModeMultiWavelengthModel(nn.Module):
     def __init__(self, config, num_layers):
         super().__init__()
@@ -437,20 +434,37 @@ class MultiModeMultiWavelengthModel(nn.Module):
         前向传播
         
         参数:
-            x: 输入光场，形状为 [B, C, H, W]
-               B - 批次大小 (可以是模式数量)
-               C - 波长通道数
-               H, W - 空间分辨率
+            x: 输入场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
+            
+        返回:
+            输出场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
         """
+        # 检查输入形状
+        input_shape = x.shape
+        print(f"模型输入形状: {input_shape}")
+        
         # 通过所有衍射层
-        for layer in self.layers:
-            x = layer(x)
+        for i, layer in enumerate(self.layers):
+            try:
+                x = layer(x)
+                if i == 0:
+                    print(f"第一层后形状: {x.shape}")
+            except Exception as e:
+                print(f"在层 {i} 处理时出错: {e}")
+                print(f"层 {i} 输入形状: {x.shape}")
+                raise
         
         # 最终传播和探测
-        x = self.final_propagation(x)
-        output = self.detector(x)
+        try:
+            x = self.final_propagation(x)
+            print(f"最终传播后形状: {x.shape}")
+        except Exception as e:
+            print(f"最终传播时出错: {e}")
+            print(f"最终传播输入形状: {x.shape}")
+            raise
         
-        return output
+        return x
+
     
     def get_all_phase_masks(self):
         """获取所有相位掩膜（仅用于可视化和分析）"""
@@ -537,45 +551,77 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         self.propagator = WavelengthDependentPropagation(
             pixel_size, wavelengths, z_distance
         )
+
     
     def forward(self, x):
         """
         前向传播
         
         参数:
-            x: 输入光场，形状为 [B, C, H, W]
-               B - 批次大小
-               C - 波长通道数
-               H, W - 空间分辨率
+            x: 输入场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
+            
+        返回:
+            传播后的场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
         """
-        batch_size, num_wavelengths, height, width = x.shape
+        # 检查输入形状并适应
+        if len(x.shape) == 4:
+            # 形状: [批次大小, 波长数, 高度, 宽度]
+            batch_size, num_wavelengths, height, width = x.shape
+            has_mode_dim = False
+        elif len(x.shape) == 5:
+            # 形状: [批次大小, 波长数, 模式数, 高度, 宽度]
+            batch_size, num_wavelengths, num_modes, height, width = x.shape
+            has_mode_dim = True
+            # 重新排列为 [批次大小 * 模式数, 波长数, 高度, 宽度]
+            x = x.view(batch_size * num_modes, num_wavelengths, height, width)
+        else:
+            raise ValueError(f"输入形状 {x.shape} 不受支持。需要 4D [B,W,H,W] 或 5D [B,W,M,H,W] 张量。")
         
         # 确保波长数量匹配
         assert num_wavelengths == len(self.wavelengths), \
             f"输入波长通道数 {num_wavelengths} 与配置的波长数 {len(self.wavelengths)} 不匹配"
         
-        # 分别处理每个波长
-        outputs = []
-        for i in range(num_wavelengths):
-            # 获取当前波长的光场
-            field = x[:, i:i+1, :, :]  # 保持维度 [B, 1, H, W]
-            
-            # 计算当前波长的有效相位掩膜
-            coefficient = self.wavelength_coefficients[i]
-            effective_phase = self.phase * coefficient * self.depth_factor
-            
-            # 应用对应波长的相位掩膜
-            field = field * torch.exp(1j * effective_phase)
-            
-            outputs.append(field)
+        # 检查并调整相位掩膜大小以匹配输入
+        if self.phase.shape[0] != height or self.phase.shape[1] != width:
+            print(f"警告: 相位掩膜大小 {self.phase.shape} 与输入大小 [{height}, {width}] 不匹配")
+            # 使用插值调整相位掩膜大小
+            import torch.nn.functional as F
+            phase_resized = F.interpolate(
+                self.phase.unsqueeze(0).unsqueeze(0),  # 添加批次和通道维度
+                size=(height, width),
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(0).squeeze(0)  # 移除批次和通道维度
+        else:
+            phase_resized = self.phase
         
-        # 合并所有波长的结果
-        combined = torch.cat(outputs, dim=1)
+        # 应用相位掩模
+        for wl_idx in range(num_wavelengths):
+            # 获取当前波长的相位系数
+            with torch.no_grad():
+                self.wavelength_coefficients[self.base_wavelength_idx] = 1.0
+            
+            # 计算波长相关的相位
+            phase_multiplier = torch.clamp(
+                self.wavelength_coefficients[wl_idx], 
+                0.5, 1.5
+            ) * self.depth_factor
+            
+            # 应用相位调制
+            phase_modulation = torch.exp(1j * phase_resized * phase_multiplier)
+            x[:, wl_idx] = x[:, wl_idx] * phase_modulation
         
         # 传播
-        propagated = self.propagator(combined)
+        x = self.propagator(x)
         
-        return propagated
+        # 如果有模式维度，恢复原始形状
+        if has_mode_dim:
+            x = x.view(batch_size, num_modes, num_wavelengths, height, width)
+            # 调整维度顺序为 [批次大小, 波长数, 模式数, 高度, 宽度]
+            x = x.permute(0, 2, 1, 3, 4)
+        
+        return x
+
     
     def get_effective_phase_masks(self):
         """获取每个波长的有效相位掩膜（用于可视化和分析）"""

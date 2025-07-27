@@ -39,7 +39,6 @@ class Trainer:
             'weights_pred': evaluation_results['weights_pred'],
             'visibility': evaluation_results['visibility']
         }
-
     def _train_loop(self, model, train_loader):
         criterion = nn.MSELoss()
         optimizer = optim.Adam(model.parameters(), lr=self.config.learning_rate)
@@ -49,7 +48,16 @@ class Trainer:
         for epoch in range(self.config.epochs):
             model.train()
             epoch_loss = 0
-            for images, labels in train_loader:
+            
+            for batch_data in train_loader:
+                # 检查批次数据的格式
+                if len(batch_data) == 2:
+                    images, labels = batch_data
+                else:
+                    # 如果有超过2个元素，只取前两个
+                    images, labels = batch_data[0], batch_data[1]
+                    print(f"警告: 数据加载器返回了 {len(batch_data)} 个元素，但只使用前两个")
+                
                 images = images.to(device, dtype=torch.complex64)
                 labels = labels.to(device)  # 保持标签原样
                 
@@ -71,6 +79,7 @@ class Trainer:
         
         return losses
 
+
     def _extract_phase_masks(self, model):
         phase_masks = []
         for layer in model.layers:
@@ -88,7 +97,15 @@ class Trainer:
         model.eval()
         all_weights_pred = []
         with torch.no_grad():
-            for images, labels in test_loader:
+            for batch_data in test_loader:
+                # 检查批次数据的格式
+                if len(batch_data) == 2:
+                    images, labels = batch_data
+                else:
+                    # 如果有超过2个元素，只取前两个
+                    images, labels = batch_data[0], batch_data[1]
+                    print(f"警告: 数据加载器返回了 {len(batch_data)} 个元素，但只使用前两个")
+                
                 images = images.to(device, dtype=torch.complex64)
                 predictions = model(images)
                 B, C, H, W = predictions.shape
