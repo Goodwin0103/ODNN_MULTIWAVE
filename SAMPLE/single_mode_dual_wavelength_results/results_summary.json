@@ -1,0 +1,56 @@
+{
+  "config": {
+    "field_size": 128,
+    "layer_size": 128,
+    "wavelengths_nm": [
+      450,
+      650
+    ],
+    "offsets": [
+      [
+        -10,
+        0
+      ],
+      [
+        10,
+        0
+      ]
+    ],
+    "detectsize": 10,
+    "num_layers": 3,
+    "epochs": 100,
+    "batch_size": 4,
+    "learning_rate": 0.001
+  },
+  "training_results": {
+    "final_loss": -11.761378288269043,
+    "final_visibility": 0.11006337110529611,
+    "training_time": 1.7884266376495361,
+    "total_epochs": 100
+  },
+  "separation_metrics": {
+    "wavelength_450nm": {
+      "efficiency": 0.09689443708800337,
+      "avg_crosstalk": 0.026093917571823957,
+      "snr": 3.713295883991745,
+      "contrast": 0.891722929145718,
+      "target_energy": 0.1161038801074028,
+      "total_energy": 1.1982512474060059
+    },
+    "wavelength_650nm": {
+      "efficiency": 0.10843409589302663,
+      "avg_crosstalk": 3.1405864048991736e-06,
+      "snr": 34525.604251312616,
+      "contrast": 0.9038689141095753,
+      "target_energy": 0.11061717569828033,
+      "total_energy": 1.0201327800750732
+    },
+    "overall": {
+      "avg_efficiency": 0.102664266490515,
+      "avg_crosstalk": 0.013048529079114428,
+      "efficiency_std": 0.005769829402511632,
+      "crosstalk_std": 0.01304538849270953,
+      "separation_ratio": 7.867880362703268
+    }
+  }
+}

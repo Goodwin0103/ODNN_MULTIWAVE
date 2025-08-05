@@ -1,640 +1,272 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
-from light_propagation_simulation_qz import propagation_multi
-import matplotlib.pyplot as plt
-
-class WavelengthDependentDiffractionLayer(nn.Module):
-    def __init__(self, units: int, dx: float, wavelengths: np.ndarray, z: float, layer_idx: int = 0):
-        super().__init__()
-        self.units = units
-        self.dx = dx
-        self.wavelengths = wavelengths
-        self.z = z
-        self.layer_idx = layer_idx
-        self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
-        
-        # 基础相位掩膜 - 减小初始范围
-        self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
-        
-        # 设置基准波长索引（假设550nm是第二个波长）
-        self.base_wavelength_idx = 1  # 假设wavelengths=[450nm, 550nm, 650nm]
-        
-        # 根据物理规律计算初始波长系数
-        # 波长系数与波长成反比：550nm/λ
-        base_wavelength = wavelengths[self.base_wavelength_idx]
-        wavelength_ratios = [base_wavelength/wl for wl in wavelengths]
-        
-        # 可学习的波长系数，初始化为物理理论值
-        self.wavelength_coefficients = nn.Parameter(
-            torch.tensor(wavelength_ratios, dtype=torch.float32)
-        )
-        
-        # 层深度衰减因子
-        self.depth_factor = 1 ** layer_idx  # 深层使用更小的调制
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 在每次前向传播时固定基准波长的系数为1.0
-        with torch.no_grad():
-            self.wavelength_coefficients[self.base_wavelength_idx] = 1.0
-            
-        # 其余代码保持不变
-        B, C, H, W = x.shape
-        results = []
-        
-        phase_base = self.phase.to(dtype=x.dtype, device=x.device)
-        
-        for c in range(C):
-            # 约束相位系数
-            phase_multiplier = torch.clamp(
-                self.wavelength_coefficients[c], 
-                0.5, 1.5  
-            ) * self.depth_factor  # 深层衰减
-            
-            phase_scaled = phase_base * phase_multiplier
-            
-            # 使用固定的传播距离，或者根据波长调整
-            adaptive_z = self.z
-            
-            x_c = x[:, c:c+1]
-            
-            # 能量保持的相位调制
-            phase_modulation = torch.exp(1j * phase_scaled)
-            x_c = x_c * phase_modulation
-            
-            # 能量归一化
-            input_energy = torch.mean(torch.abs(x_c)**2)
-            
-            x_c = propagation_multi(
-                x_c, z=adaptive_z,
-                wavelengths=[self.lam_list[c]], 
-                pixel_size=self.dx, 
-                device=x.device
-            )
-            
-            # 能量恢复
-            output_energy = torch.mean(torch.abs(x_c)**2)
-            if output_energy > 1e-8:
-                energy_ratio = torch.sqrt(input_energy / output_energy)
-                x_c = x_c * energy_ratio.clamp(0.5, 2.0)  # 限制能量补偿
-            
-            results.append(x_c)
-        
-        return torch.cat(results, dim=1)
-
-    def get_phase_masks(self):
-        """获取该层所有波长的相位掩膜"""
-        base_mask = self.phase.detach().cpu().numpy()
-        wavelength_masks = []
-        
-        for c in range(len(self.wavelengths)):
-            phase_multiplier = torch.clamp(
-                self.wavelength_coefficients[c], 
-                0.5, 1.5
-            ) * self.depth_factor
-            
-            scaled_mask = base_mask * phase_multiplier.item()
-            wavelength_masks.append(scaled_mask)
-        
-        return {
-            'layer_idx': self.layer_idx,
-            'base_mask': base_mask,
-            'wavelength_masks': wavelength_masks,
-            'coefficients': self.wavelength_coefficients.detach().cpu().numpy(),
-            'wavelengths': self.wavelengths
-        }
-
-class WavelengthDependentPropagation(nn.Module):
-    def __init__(self, dx: float, wavelengths: np.ndarray, z: float):
-        super().__init__()
-        self.dx = dx
-        self.wavelengths = wavelengths
-        self.z = z
-        self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        参数:
-            x: 形状为 [B, C, H, W] 或 [B, C, M, H, W] 的张量
-        """
-        # 检查输入形状并适应
-        input_shape = x.shape
-        print(f"WavelengthDependentPropagation 输入形状: {input_shape}")
-        
-        if len(input_shape) == 4:
-            # 形状: [批次大小, 波长数, 高度, 宽度]
-            B, C, H, W = input_shape
-            has_mode_dim = False
-        elif len(input_shape) == 5:
-            # 形状: [批次大小, 波长数, 模式数, 高度, 宽度]
-            B, C, M, H, W = input_shape
-            has_mode_dim = True
-            # 重新排列为 [批次大小 * 模式数, 波长数, 高度, 宽度]
-            x = x.reshape(B * M, C, H, W)
-            print(f"重新排列后形状: {x.shape}")
-        else:
-            raise ValueError(f"输入形状 {input_shape} 不受支持。需要 4D [B,C,H,W] 或 5D [B,C,M,H,W] 张量。")
-        
-        # 检查通道数与波长数量是否匹配
-        if C != len(self.wavelengths):
-            print(f"警告: 传播层中输入通道数({C})与波长数量({len(self.wavelengths)})不匹配")
-        
-        results = []
-        
-        # 分别处理每个批次
-        for b in range(x.shape[0]):
-            batch_results = []
-            
-            # 分别处理每个通道(波长)
-            for c in range(min(C, len(self.wavelengths))):
-                x_bc = x[b:b+1, c:c+1]
-                
-                # 传播
-                x_bc = propagation_multi(
-                    x_bc, z=self.z, 
-                    wavelengths=[self.lam_list[c]],
-                    pixel_size=self.dx, 
-                    device=x.device
-                )
-                
-                batch_results.append(x_bc)
-            
-            # 合并该批次的所有通道
-            batch_output = torch.cat(batch_results, dim=1)
-            results.append(batch_output)
-        
-        # 合并所有批次
-        output = torch.cat(results, dim=0)
-        
-        # 如果有模式维度，恢复原始形状
-        if has_mode_dim:
-            output = output.reshape(B, M, C, H, W)
-            # 调整维度顺序为 [批次大小, 波长数, 模式数, 高度, 宽度]
-            output = output.permute(0, 2, 1, 3, 4)
-            print(f"恢复后形状: {output.shape}")
-        
-        return output
-
-
-class RegressionDetector(nn.Module):
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        return torch.square(torch.abs(inputs))
-
-class WavelengthDependentD2NNModel(nn.Module):
-    def __init__(self, config, num_layers: int):
-            super().__init__()
-            self.config = config
-            self.num_layers = num_layers
-            
-            # 使用稳定化层
-            self.layers = nn.ModuleList([
-                WavelengthDependentDiffractionLayer(
-                    config.layer_size, config.pixel_size,
-                    config.wavelengths, config.z_layers, 
-                    layer_idx=i  # 传递层索引
-                ) for i in range(num_layers)
-            ])
-            
-            self.propagation = WavelengthDependentPropagation(
-                config.pixel_size, config.wavelengths, config.z_prop
-            )
-            self.regression = RegressionDetector()
-            
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-        
-        x = self.propagation(x)
-        return self.regression(x)
-
-    def get_phase_masks(self):
-        """获取该层所有波长的相位掩膜"""
-        base_mask = self.phase.detach().cpu().numpy()
-        wavelength_masks = []
-        
-        for c in range(len(self.wavelengths)):
-            phase_multiplier = torch.clamp(
-                self.wavelength_coefficients[c], 
-                0.5, 1.5
-            ) * self.depth_factor
-            
-            scaled_mask = base_mask * phase_multiplier.item()
-            wavelength_masks.append(scaled_mask)
-        
-        return {
-            'layer_idx': self.layer_idx,
-            'base_mask': base_mask,
-            'wavelength_masks': wavelength_masks,
-            'coefficients': self.wavelength_coefficients.detach().cpu().numpy(),
-            'wavelengths': self.wavelengths
-        }
-
-    def print_phase_masks(self, save_path=None):
-        """打印所有层的相位掩膜"""
-        print("\n====== 模型所有相位掩膜信息 ======")
-        
-        for i, layer in enumerate(self.layers):
-            mask_data = layer.get_phase_masks()
-            base_mask = mask_data['base_mask']
-            wavelength_masks = mask_data['wavelength_masks']
-            coefficients = mask_data['coefficients']
-            wavelengths = mask_data['wavelengths']
-            
-            print(f"\n== 层 {i} 相位掩膜信息 ==")
-            print(f"基础相位掩膜形状: {base_mask.shape}")
-            print(f"基础相位掩膜范围: [{np.min(base_mask):.4f}, {np.max(base_mask):.4f}]")
-            print(f"波长系数: {coefficients}")
-            
-            # 创建图形
-            n_wavelengths = len(wavelengths)
-            fig, axes = plt.subplots(1, n_wavelengths + 1, figsize=(5*(n_wavelengths+1), 5))
-            
-            # 绘制基础相位掩膜
-            im0 = axes[0].imshow(base_mask, cmap='viridis')
-            axes[0].set_title(f"layer {i} base phase mask")
-            plt.colorbar(im0, ax=axes[0], label='Phase (rad)')
-            
-            # 绘制每个波长的相位掩膜
-            for j, (mask, coef, wl) in enumerate(zip(wavelength_masks, coefficients, wavelengths)):
-                im = axes[j+1].imshow(mask, cmap='viridis')
-                axes[j+1].set_title(f"Wavelength {wl*1e9:.1f}nm\nCoef: {coef:.4f}")
-                plt.colorbar(im, ax=axes[j+1], label='Phase (rad)')
-            
-            plt.tight_layout()
-            
-            if save_path:
-                # 不要在save_path后面再添加子目录
-                plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
-                print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
-            else:
-                plt.show()
-
-    def get_all_phase_masks(self):
-        """获取所有层的相位掩膜数据"""
-        all_masks = []
-        for layer in self.layers:
-            all_masks.append(layer.get_phase_masks())
-        return all_masks
-    
-
-import torch
-import torch.nn as nn
-import numpy as np
-from light_propagation_simulation_qz import propagation_multi
-
-class ModeModeWavelengthDependentDiffractionLayer(nn.Module):
-    def __init__(self, units: int, dx: float, wavelengths: np.ndarray, z: float, 
-                 num_modes: int, layer_idx: int = 0):
-        super().__init__()
-        self.units = units
-        self.dx = dx
-        self.wavelengths = wavelengths
-        self.z = z
-        self.layer_idx = layer_idx
-        self.num_modes = num_modes
-        
-        # 注册波长列表为缓冲区
-        self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
-        
-        # 为每个模式创建基础相位掩膜
-        self.phase_masks = nn.ParameterList([
-            nn.Parameter(torch.rand(units, units) * np.pi)  
-            for _ in range(num_modes)
-        ])
-        
-        # 为每个模式创建波长系数
-        self.wavelength_coefficients = nn.ParameterList([
-            nn.Parameter(torch.ones(len(wavelengths), dtype=torch.float32))
-            for _ in range(num_modes)
-        ])
-        
-        # 设置基准波长索引
-        self.base_wavelength_idx = 1  # 假设wavelengths=[450nm, 550nm, 650nm]
-        
-        # 层深度衰减因子
-        self.depth_factor = 1.0 / (1.0 + 0.1 * layer_idx)  # 深层使用更小的调制
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        处理多波长输入
-        
-        参数:
-            x: 形状为 [B, C, H, W] 的张量，其中:
-               B - 批次大小 (等于模式数量)
-               C - 波长通道数
-               H, W - 高度和宽度
-        
-        返回:
-            形状相同的输出张量
-        """
-        B, C, H, W = x.shape
-        results = []
-        
-        # 处理每个模式(批次)
-        for b in range(B):
-            # 固定基准波长的系数为1.0
-            with torch.no_grad():
-                self.wavelength_coefficients[b][self.base_wavelength_idx] = 1.0
-            
-            # 获取该模式的相位掩膜
-            phase_base = self.phase_masks[b].to(dtype=torch.float32, device=x.device)
-            
-            # 处理该模式的所有波长
-            mode_results = []
-            for c in range(C):
-                # 约束相位系数
-                phase_multiplier = torch.clamp(
-                    self.wavelength_coefficients[b][c], 
-                    0.5, 1.5  
-                ) * self.depth_factor
-                
-                # 调整相位掩膜
-                phase_scaled = phase_base * phase_multiplier
-                
-                # 提取当前模式和波长的数据
-                x_bc = x[b:b+1, c:c+1]
-                
-                # 相位调制
-                phase_modulation = torch.exp(1j * phase_scaled)
-                x_bc = x_bc * phase_modulation
-                
-                # 能量归一化
-                input_energy = torch.mean(torch.abs(x_bc)**2)
-                
-                # 传播
-                x_bc = propagation_multi(
-                    x_bc, z=self.z,
-                    wavelengths=[self.lam_list[c]], 
-                    pixel_size=self.dx, 
-                    device=x.device
-                )
-                
-                # 能量恢复
-                output_energy = torch.mean(torch.abs(x_bc)**2)
-                if output_energy > 1e-8:
-                    energy_ratio = torch.sqrt(input_energy / output_energy)
-                    x_bc = x_bc * energy_ratio.clamp(0.5, 2.0)
-                
-                mode_results.append(x_bc)
-            
-            # 合并该模式的所有波长结果
-            mode_output = torch.cat(mode_results, dim=1)
-            results.append(mode_output)
-        
-        # 合并所有模式的结果
-        return torch.cat(results, dim=0)
-    
-    def get_mode_specific_phase_masks(self):
-        """获取所有模式的相位掩膜"""
-        mode_masks = []
-        
-        for m in range(self.num_modes):
-            base_mask = self.phase_masks[m].detach().cpu().numpy()
-            wavelength_masks = []
-            
-            for c in range(len(self.wavelengths)):
-                phase_multiplier = torch.clamp(
-                    self.wavelength_coefficients[m][c], 
-                    0.5, 1.5
-                ) * self.depth_factor
-                
-                scaled_mask = base_mask * phase_multiplier.item()
-                wavelength_masks.append(scaled_mask)
-            
-            mode_masks.append(wavelength_masks)
-        
-        return mode_masks
+from typing import List, Tuple, Optional
+import math
 
 class MultiModeMultiWavelengthModel(nn.Module):
-    def __init__(self, config, num_layers):
-        super().__init__()
+    """
+    多模式多波长衍射神经网络模型
+    支持多个模式和多个波长的同时处理
+    """
+    
+    def __init__(self, config, data_generator, evaluation_regions=None):
+        super(MultiModeMultiWavelengthModel, self).__init__()
+        self.config = config
+        self.data_generator = data_generator
+        self.evaluation_regions = evaluation_regions or []
         
-        # 使用物理原理的多波长衍射层
-        self.layers = nn.ModuleList([
-            PhysicsBasedMultiWavelengthLayer(
-                config.layer_size, 
-                config.pixel_size,
-                config.wavelengths, 
-                config.z_layers,
-                config.num_modes, 
-                layer_idx=i
-            ) for i in range(num_layers)
+        # 基本参数
+        self.num_modes = getattr(config, 'num_modes', 3)
+        self.wavelengths = config.wavelengths
+        self.num_wavelengths = len(self.wavelengths)
+        self.layer_size = config.layer_size
+        self.pixel_size = config.pixel_size
+        
+        print(f"🚀 初始化多模式多波长模型:")
+        print(f"   模式数: {self.num_modes}")
+        print(f"   波长数: {self.num_wavelengths}")
+        print(f"   波长: {[wl*1e9 for wl in self.wavelengths]} nm")
+        print(f"   层大小: {self.layer_size}×{self.layer_size}")
+        print(f"   评估区域数: {len(self.evaluation_regions)}")
+        
+        # 创建衍射层
+        self.layers = nn.ModuleList()
+        for i in range(config.num_layers):
+            layer = DiffractionLayer(
+                layer_size=self.layer_size,
+                wavelengths=self.wavelengths,
+                pixel_size=self.pixel_size,
+                z_distance=config.z_layers,
+                layer_index=i
+            )
+            self.layers.append(layer)
+        
+        # 传播距离参数
+        self.z_prop = config.z_prop
+        self.z_step = config.z_step
+        
+        print(f"✅ 模型创建完成，共 {len(self.layers)} 层")
+    
+    def forward(self, x):
+        """
+        前向传播
+        输入: x [batch_size, num_modes, num_wavelengths, height, width]
+        输出: [batch_size, num_modes, num_wavelengths, height, width]
+        """
+        batch_size, num_modes, num_wavelengths, height, width = x.shape
+        
+        # 处理每个模式和波长的组合
+        outputs = []
+        
+        for mode_idx in range(num_modes):
+            mode_outputs = []
+            
+            for wl_idx in range(num_wavelengths):
+                # 获取当前模式和波长的输入
+                current_field = x[:, mode_idx, wl_idx]  # [batch_size, height, width]
+                
+                # 通过所有衍射层
+                for layer in self.layers:
+                    current_field = layer(current_field, wl_idx)
+                
+                # 最终传播到检测平面
+                current_field = self._propagate_to_detector(current_field, wl_idx)
+                
+                mode_outputs.append(current_field)
+            
+            outputs.append(torch.stack(mode_outputs, dim=1))  # [batch_size, num_wavelengths, height, width]
+        
+        # 重新组织输出格式
+        output = torch.stack(outputs, dim=1)  # [batch_size, num_modes, num_wavelengths, height, width]
+        
+        return output
+    
+    def _propagate_to_detector(self, field, wavelength_idx):
+        """传播到检测器平面"""
+        wavelength = self.wavelengths[wavelength_idx]
+        
+        # 使用角谱传播
+        field_ft = torch.fft.fft2(field)
+        
+        # 创建传播核
+        k = 2 * np.pi / wavelength
+        kx, ky = self._get_k_vectors()
+        kz = torch.sqrt(k**2 - kx**2 - ky**2 + 0j)
+        
+        # 传播相位
+        propagation_phase = torch.exp(1j * kz * self.z_prop)
+        
+        # 应用传播
+        field_ft_prop = field_ft * propagation_phase
+        field_prop = torch.fft.ifft2(field_ft_prop)
+        
+        return field_prop
+    
+    def _get_k_vectors(self):
+        """获取k空间向量"""
+        # 创建频率网格
+        fx = torch.fft.fftfreq(self.layer_size, self.pixel_size)
+        fy = torch.fft.fftfreq(self.layer_size, self.pixel_size)
+        FX, FY = torch.meshgrid(fx, fy, indexing='ij')
+        
+        # 转换为k向量
+        kx = 2 * np.pi * FX
+        ky = 2 * np.pi * FY
+        
+        return kx.to(next(self.parameters()).device), ky.to(next(self.parameters()).device)
+    
+    def get_effective_phase_masks_for_layer(self, layer):
+        """获取层的有效相位掩膜"""
+        return layer.get_phase_masks()
+    
+    def analyze_layer_statistics(self, input_field):
+        """分析层统计信息"""
+        stats = {}
+        
+        with torch.no_grad():
+            current_field = input_field
+            
+            for i, layer in enumerate(self.layers):
+                # 计算层前的统计信息
+                energy_before = torch.mean(torch.abs(current_field)**2)
+                
+                # 通过层
+                if len(current_field.shape) == 5:  # [B, modes, wavelengths, H, W]
+                    layer_output = torch.zeros_like(current_field)
+                    for b in range(current_field.shape[0]):
+                        for m in range(current_field.shape[1]):
+                            for w in range(current_field.shape[2]):
+                                layer_output[b, m, w] = layer(current_field[b, m, w], w)
+                    current_field = layer_output
+                else:
+                    current_field = layer(current_field, 0)  # 默认使用第一个波长
+                
+                # 计算层后的统计信息
+                energy_after = torch.mean(torch.abs(current_field)**2)
+                
+                stats[f'layer_{i}'] = {
+                    'energy_before': energy_before.item(),
+                    'energy_after': energy_after.item(),
+                    'energy_ratio': (energy_after / energy_before).item() if energy_before > 0 else 0,
+                    'phase_range': layer.get_phase_range()
+                }
+        
+        return stats
+
+class DiffractionLayer(nn.Module):
+    """单个衍射层"""
+    
+    def __init__(self, layer_size, wavelengths, pixel_size, z_distance, layer_index=0):
+        super(DiffractionLayer, self).__init__()
+        self.layer_size = layer_size
+        self.wavelengths = wavelengths
+        self.num_wavelengths = len(wavelengths)
+        self.pixel_size = pixel_size
+        self.z_distance = z_distance
+        self.layer_index = layer_index
+        
+        # 为每个波长创建独立的相位掩膜
+        self.phase_masks = nn.ParameterList([
+            nn.Parameter(torch.randn(layer_size, layer_size) * 0.1)
+            for _ in range(self.num_wavelengths)
         ])
         
-        # 最终传播和探测器
-        self.final_propagation = WavelengthDependentPropagation(
-            config.pixel_size, config.wavelengths, config.z_prop
-        )
-        self.detector = RegressionDetector()
-        self.config = config
+        print(f"   创建衍射层 {layer_index}: {self.num_wavelengths} 个波长相位掩膜")
     
-    def forward(self, x):
+    def forward(self, field, wavelength_idx):
         """
         前向传播
-        
-        参数:
-            x: 输入场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
-            
-        返回:
-            输出场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
+        field: [batch_size, height, width] 复数场
+        wavelength_idx: 波长索引
         """
-        # 检查输入形状
-        input_shape = x.shape
-        print(f"模型输入形状: {input_shape}")
+        # 应用相位调制
+        phase_mask = self.phase_masks[wavelength_idx]
+        modulated_field = field * torch.exp(1j * phase_mask)
         
-        # 通过所有衍射层
-        for i, layer in enumerate(self.layers):
-            try:
-                x = layer(x)
-                if i == 0:
-                    print(f"第一层后形状: {x.shape}")
-            except Exception as e:
-                print(f"在层 {i} 处理时出错: {e}")
-                print(f"层 {i} 输入形状: {x.shape}")
-                raise
+        # 传播到下一层
+        propagated_field = self._propagate(modulated_field, wavelength_idx)
         
-        # 最终传播和探测
-        try:
-            x = self.final_propagation(x)
-            print(f"最终传播后形状: {x.shape}")
-        except Exception as e:
-            print(f"最终传播时出错: {e}")
-            print(f"最终传播输入形状: {x.shape}")
-            raise
-        
-        return x
-
+        return propagated_field
     
-    def get_all_phase_masks(self):
-        """获取所有相位掩膜（仅用于可视化和分析）"""
-        all_masks = []
-        for i, layer in enumerate(self.layers):
-            # 获取每个波长的有效相位掩膜
-            wavelength_masks = layer.get_effective_phase_masks()
-            for j, mask in enumerate(wavelength_masks):
-                all_masks.append(mask)
-                print(f"层 {i} 相位掩膜 {j} (对应波长 {self.config.wavelengths[j]*1e9:.1f}nm):")
-                print(f"  形状: {mask.shape}")
-                print(f"  范围: [{mask.min():.4f}, {mask.max():.4f}]")
-                print(f"  平均值: {mask.mean():.4f}")
-                print(f"  标准差: {mask.std():.4f}")
-        return all_masks
+    def _propagate(self, field, wavelength_idx):
+        """使用角谱法传播"""
+        wavelength = self.wavelengths[wavelength_idx]
+        
+        # FFT
+        field_ft = torch.fft.fft2(field)
+        
+        # 创建传播核
+        k = 2 * np.pi / wavelength
+        fx = torch.fft.fftfreq(self.layer_size, self.pixel_size)
+        fy = torch.fft.fftfreq(self.layer_size, self.pixel_size)
+        FX, FY = torch.meshgrid(fx, fy, indexing='ij')
+        
+        kx = 2 * np.pi * FX.to(field.device)
+        ky = 2 * np.pi * FY.to(field.device)
+        kz = torch.sqrt(k**2 - kx**2 - ky**2 + 0j)
+        
+        # 传播相位
+        propagation_kernel = torch.exp(1j * kz * self.z_distance)
+        
+        # 应用传播并逆FFT
+        field_ft_prop = field_ft * propagation_kernel
+        field_prop = torch.fft.ifft2(field_ft_prop)
+        
+        return field_prop
     
-    def print_phase_masks(self, save_path=None):
-        """打印所有层的相位掩膜"""
-        print("\n====== 模型所有相位掩膜信息 ======")
-        
-        for i, layer in enumerate(self.layers):
-            # 获取每个波长的有效相位掩膜
-            wavelength_masks = layer.get_effective_phase_masks()
-            
-            print(f"\n== 层 {i} 相位掩膜信息 ==")
-            print(f"基础相位掩膜形状: {wavelength_masks[0].shape}")
-            print(f"基础相位掩膜范围: [{np.min(wavelength_masks[0]):.4f}, {np.max(wavelength_masks[0]):.4f}]")
-            print(f"波长系数: {layer.wavelength_coefficients.detach().cpu().numpy()}")
-            
-            # 创建图形
-            n_wavelengths = len(self.config.wavelengths)
-            fig, axes = plt.subplots(1, n_wavelengths, figsize=(5*n_wavelengths, 5))
-            
-            # 如果只有一个波长，确保axes是列表
-            if n_wavelengths == 1:
-                axes = [axes]
-            
-            # 绘制每个波长的相位掩膜
-            for j, (mask, wl) in enumerate(zip(wavelength_masks, self.config.wavelengths)):
-                im = axes[j].imshow(mask, cmap='viridis')
-                axes[j].set_title(f"Wavelength {wl*1e9:.1f}nm\nCoef: {layer.wavelength_coefficients[j].item():.4f}")
-                plt.colorbar(im, ax=axes[j], label='Phase (rad)')
-            
-            plt.tight_layout()
-            
-            if save_path:
-                plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
-                print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
-            else:
-                plt.show()
-
-
-class PhysicsBasedMultiWavelengthLayer(nn.Module):
-    def __init__(self, units, pixel_size, wavelengths, z_distance, num_modes, layer_idx=0):
-        super().__init__()
-        
-        self.units = units
-        self.pixel_size = pixel_size
-        self.wavelengths = wavelengths
-        self.z_distance = z_distance
-        self.num_modes = num_modes
-        self.layer_idx = layer_idx
-        
-        # 基础相位掩膜 - 减小初始范围
-        self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
-        
-        # 设置基准波长索引（假设550nm是第二个波长）
-        self.base_wavelength_idx = 1  # 假设wavelengths=[450nm, 550nm, 650nm]
-        
-        # 根据物理规律计算初始波长系数
-        # 波长系数与波长成反比：550nm/λ
-        base_wavelength = wavelengths[self.base_wavelength_idx]
-        wavelength_ratios = [base_wavelength/wl for wl in wavelengths]
-        
-        # 可学习的波长系数，初始化为物理理论值
-        self.wavelength_coefficients = nn.Parameter(
-            torch.tensor(wavelength_ratios, dtype=torch.float32)
-        )
-        
-        # 层深度衰减因子
-        self.depth_factor = 1 ** layer_idx  # 深层使用更小的调制
-        
-        # 初始化传播器
-        self.propagator = WavelengthDependentPropagation(
-            pixel_size, wavelengths, z_distance
-        )
-
+    def get_phase_masks(self):
+        """获取所有波长的相位掩膜"""
+        return [mask.detach().cpu().numpy() for mask in self.phase_masks]
     
-    def forward(self, x):
+    def get_phase_range(self):
+        """获取相位范围"""
+        ranges = []
+        for mask in self.phase_masks:
+            ranges.append((mask.min().item(), mask.max().item()))
+        return ranges
+
+class PhysicsConstrainedLoss(nn.Module):
+    """物理约束损失函数"""
+    
+    def __init__(self, energy_weight=1.0, smoothness_weight=0.1):
+        super(PhysicsConstrainedLoss, self).__init__()
+        self.energy_weight = energy_weight
+        self.smoothness_weight = smoothness_weight
+        self.mse_loss = nn.MSELoss()
+    
+    def forward(self, predictions, targets, input_energy=None):
         """
-        前向传播
-        
-        参数:
-            x: 输入场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
-            
-        返回:
-            传播后的场 [批次大小, 波长数, 高度, 宽度] 或 [批次大小, 波长数, 模式数, 高度, 宽度]
+        计算总损失
+        predictions: 模型预测 [B, modes, wavelengths, H, W]
+        targets: 目标值 [B, modes, wavelengths, H, W] 或 None
+        input_energy: 输入能量用于能量守恒约束
         """
-        # 检查输入形状并适应
-        if len(x.shape) == 4:
-            # 形状: [批次大小, 波长数, 高度, 宽度]
-            batch_size, num_wavelengths, height, width = x.shape
-            has_mode_dim = False
-        elif len(x.shape) == 5:
-            # 形状: [批次大小, 波长数, 模式数, 高度, 宽度]
-            batch_size, num_wavelengths, num_modes, height, width = x.shape
-            has_mode_dim = True
-            # 重新排列为 [批次大小 * 模式数, 波长数, 高度, 宽度]
-            x = x.view(batch_size * num_modes, num_wavelengths, height, width)
-        else:
-            raise ValueError(f"输入形状 {x.shape} 不受支持。需要 4D [B,W,H,W] 或 5D [B,W,M,H,W] 张量。")
+        total_loss = 0.0
         
-        # 确保波长数量匹配
-        assert num_wavelengths == len(self.wavelengths), \
-            f"输入波长通道数 {num_wavelengths} 与配置的波长数 {len(self.wavelengths)} 不匹配"
+        # 主要损失（如果有目标）
+        if targets is not None:
+            main_loss = self.mse_loss(predictions, targets)
+            total_loss += main_loss
         
-        # 检查并调整相位掩膜大小以匹配输入
-        if self.phase.shape[0] != height or self.phase.shape[1] != width:
-            print(f"警告: 相位掩膜大小 {self.phase.shape} 与输入大小 [{height}, {width}] 不匹配")
-            # 使用插值调整相位掩膜大小
-            import torch.nn.functional as F
-            phase_resized = F.interpolate(
-                self.phase.unsqueeze(0).unsqueeze(0),  # 添加批次和通道维度
-                size=(height, width),
-                mode='bilinear',
-                align_corners=False
-            ).squeeze(0).squeeze(0)  # 移除批次和通道维度
-        else:
-            phase_resized = self.phase
+        # 能量守恒约束
+        if input_energy is not None:
+            output_energy = torch.sum(torch.abs(predictions)**2, dim=(-2, -1))
+            energy_loss = self.mse_loss(output_energy, input_energy)
+            total_loss += self.energy_weight * energy_loss
         
-        # 应用相位掩模
-        for wl_idx in range(num_wavelengths):
-            # 获取当前波长的相位系数
-            with torch.no_grad():
-                self.wavelength_coefficients[self.base_wavelength_idx] = 1.0
-            
-            # 计算波长相关的相位
-            phase_multiplier = torch.clamp(
-                self.wavelength_coefficients[wl_idx], 
-                0.5, 1.5
-            ) * self.depth_factor
-            
-            # 应用相位调制
-            phase_modulation = torch.exp(1j * phase_resized * phase_multiplier)
-            x[:, wl_idx] = x[:, wl_idx] * phase_modulation
+        # 平滑性约束（相位掩膜的平滑性）
+        smoothness_loss = self._compute_smoothness_loss(predictions)
+        total_loss += self.smoothness_weight * smoothness_loss
         
-        # 传播
-        x = self.propagator(x)
-        
-        # 如果有模式维度，恢复原始形状
-        if has_mode_dim:
-            x = x.view(batch_size, num_modes, num_wavelengths, height, width)
-            # 调整维度顺序为 [批次大小, 波长数, 模式数, 高度, 宽度]
-            x = x.permute(0, 2, 1, 3, 4)
-        
-        return x
-
+        return total_loss
     
-    def get_effective_phase_masks(self):
-        """获取每个波长的有效相位掩膜（用于可视化和分析）"""
-        effective_phases = []
+    def _compute_smoothness_loss(self, predictions):
+        """计算平滑性损失"""
+        # 计算梯度的L2范数作为平滑性度量
+        grad_x = predictions[:, :, :, 1:, :] - predictions[:, :, :, :-1, :]
+        grad_y = predictions[:, :, :, :, 1:] - predictions[:, :, :, :, :-1]
         
-        for i, wl in enumerate(self.wavelengths):
-            # 根据波长系数调整基础相位
-            coefficient = self.wavelength_coefficients[i]
-            effective_phase = self.phase * coefficient * self.depth_factor
-            
-            # 转换为NumPy数组用于返回
-            phase_np = effective_phase.detach().cpu().numpy()
-            effective_phases.append(phase_np)
-        
-        return effective_phases
-
+        smoothness = torch.mean(grad_x**2) + torch.mean(grad_y**2)
+        return smoothness

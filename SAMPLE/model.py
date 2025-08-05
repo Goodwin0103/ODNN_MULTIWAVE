@@ -14,9 +14,9 @@ class SimpleMultiWavelengthModel(nn.Module):
         self.wavelengths = config.wavelengths
         self.device = config.device
         
-        # 初始化相位掩膜参数 - 使用更好的初始化方法
+        # 初始化相位掩膜参数 - 确保在正确设备上
         self.phase_masks = nn.ParameterList([
-            nn.Parameter(torch.rand(config.layer_size, config.layer_size) * 2 * np.pi - np.pi)
+            nn.Parameter(torch.rand(config.field_size, config.field_size, device=config.device) * 2 * np.pi - np.pi)
             for _ in range(num_layers)
         ])
         
@@ -37,6 +37,8 @@ class SimpleMultiWavelengthModel(nn.Module):
         
         # 对每个波长分别处理
         for w_idx, input_field in enumerate(input_fields):
+            # 确保输入场在正确设备上
+            input_field = input_field.to(self.device)
             wavelength = self.wavelengths[w_idx]
             output_field = self._process_single_wavelength(input_field, wavelength)
             output_fields.append(output_field)
@@ -45,12 +47,13 @@ class SimpleMultiWavelengthModel(nn.Module):
     
     def _process_single_wavelength(self, input_field, wavelength):
         """处理单个波长的场"""
-        current_field = input_field
+        current_field = input_field.to(self.device)
         
         # 通过每个相位掩膜和传播
         for i in range(self.num_layers):
-            # 应用相位掩膜
-            current_field = current_field * torch.exp(1j * self.phase_masks[i])
+            # 应用相位掩膜 - 确保相位掩膜在正确设备上
+            phase_mask = self.phase_masks[i].to(self.device)
+            current_field = current_field * torch.exp(1j * phase_mask)
             
             # 传播到下一层
             if i < self.num_layers - 1:
@@ -71,14 +74,16 @@ class SimpleMultiWavelengthModel(nn.Module):
         
         return output_field
     
-    # 修改损失函数计算
     def compute_loss(self, output_fields):
         """计算损失函数 - 鼓励波长分离"""
-        total_loss = 0
+        total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         num_wavelengths = len(output_fields)
         
         # 对每个波长计算损失
         for w_idx, field in enumerate(output_fields):
+            # 确保field在正确设备上
+            field = field.to(self.device)
+            
             # 计算强度
             intensity = torch.abs(field)**2
             
@@ -88,10 +93,10 @@ class SimpleMultiWavelengthModel(nn.Module):
             center_y = self.field_size // 2 + offset_y
             
             half_size = self.config.detect_size // 2
-            x_start = center_x - half_size
-            x_end = center_x + half_size
-            y_start = center_y - half_size
-            y_end = center_y + half_size
+            x_start = max(0, center_x - half_size)
+            x_end = min(self.field_size, center_x + half_size)
+            y_start = max(0, center_y - half_size)
+            y_end = min(self.field_size, center_y + half_size)
             
             # 计算目标区域内的能量
             target_energy = torch.sum(intensity[y_start:y_end, x_start:x_end])
@@ -109,19 +114,19 @@ class SimpleMultiWavelengthModel(nn.Module):
                     other_center_x = self.field_size // 2 + other_offset_x
                     other_center_y = self.field_size // 2 + other_offset_y
                     
-                    other_x_start = other_center_x - half_size
-                    other_x_end = other_center_x + half_size
-                    other_y_start = other_center_y - half_size
-                    other_y_end = other_center_y + half_size
+                    other_x_start = max(0, other_center_x - half_size)
+                    other_x_end = min(self.field_size, other_center_x + half_size)
+                    other_y_start = max(0, other_center_y - half_size)
+                    other_y_end = min(self.field_size, other_center_y + half_size)
                     
                     # 计算其他波长目标区域的能量
                     other_target_energy = torch.sum(intensity[other_y_start:other_y_end, other_x_start:other_x_end])
                     
                     # 添加惩罚项 - 希望在其他波长的目标区域能量最小
-                    wavelength_loss += torch.log(other_target_energy / (total_energy + 1e-10) + 1e-10)
+                    wavelength_loss = wavelength_loss + torch.log(other_target_energy / (total_energy + 1e-10) + 1e-10)
             
             # 累加到总损失
-            total_loss += wavelength_loss
+            total_loss = total_loss + wavelength_loss
         
         return total_loss
 
@@ -141,7 +146,7 @@ class SimpleMultiWavelengthModel(nn.Module):
         # 对每个波长分别计算
         for w_idx in range(num_wavelengths):
             wavelength = self.wavelengths[w_idx]
-            field = input_fields[w_idx]
+            field = input_fields[w_idx].to(self.device)
             
             # 存储每一层的场分布
             fields_per_wavelength = []
@@ -149,7 +154,7 @@ class SimpleMultiWavelengthModel(nn.Module):
             # 通过每一层传播
             for l_idx in range(len(self.phase_masks)):
                 # 应用相位掩膜
-                phase_mask = self.phase_masks[l_idx]
+                phase_mask = self.phase_masks[l_idx].to(self.device)
                 field = field * torch.exp(1j * phase_mask)
                 
                 # 传播到下一层

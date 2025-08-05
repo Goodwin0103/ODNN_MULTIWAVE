@@ -1,4 +1,3 @@
-# config.py
 import numpy as np
 import os
 from dataclasses import dataclass, field
@@ -11,7 +10,6 @@ def default_wavelengths():
 def default_offsets():
     """默认偏移列表工厂函数"""
     return [(0,0), (20,0), (-20,0)]
-
 @dataclass
 class Config:
     # 基本参数
@@ -39,7 +37,7 @@ class Config:
     lr_decay: float = 0.99                            # 学习率衰减
     epochs: int = 400                                # 训练轮数
     batch_size: int = 3                               # 批量大小
-    
+    num_layers: int = 3                            # 网络层数
     # 保存参数
     save_dir: str = "./results_multi_mode_multi_wl/"  # 保存目录
     flag_savemat: bool = True                         # 是否保存.mat文件
