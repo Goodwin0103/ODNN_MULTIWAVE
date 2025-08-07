@@ -1,629 +1,294 @@
-import torch
-import torch.nn as nn
-import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # 使用非交互式后端
 import matplotlib.pyplot as plt
+import torch
+import numpy as np
 import os
-from torch.utils.data import Dataset, DataLoader
+from scipy.interpolate import griddata
 
 class SingleModeDualWavelengthDataGenerator:
     def __init__(self, config):
         self.config = config
+        self.field_size = config.field_size
+        self.wavelengths = config.wavelengths
         self.device = config.device
         
-        # MMF parameters
-        self.core_radius = 25e-6  # 25 μm core radius
-        self.na = 0.22  # Numerical aperture
+        # 加载或生成基础模式
+        self.base_mode = self._load_or_generate_mode()
         
-        # Load or generate MMF mode data
-        self.mmf_mode_data = self.load_or_generate_mmf_modes()
+    def _load_or_generate_mode(self):
+        """加载或生成基础光场模式"""
+        # 尝试加载预存的特征模式
+        eigenmode_files = [
+            'eigenmodes_OM4.npy',
+            '/home/shiyue/ODNN_MULTIWAVE/SAMPLE/eigenmodes_OM4.npy',
+            'data/eigenmodes_OM4.npy'
+        ]
         
-    def load_or_generate_mmf_modes(self):
-        """加载MMF模式数据或生成（如果不可用）- 尺寸适配版本"""
+        for file_path in eigenmode_files:
+            if os.path.exists(file_path):
+                print(f"找到特征模式文件，正在加载: {file_path}")
+                try:
+                    data = np.load(file_path)
+                    print(f"成功加载特征模式数据，形状: {data.shape}")
+                    
+                    # 处理不同的数据格式
+                    if len(data.shape) == 3:
+                        # 选择第一个模式
+                        mode = data[:, :, 0]
+                        print(f"原始模式形状: {mode.shape}")
+                    elif len(data.shape) == 2:
+                        mode = data
+                        print(f"原始模式形状: {mode.shape}")
+                    else:
+                        print(f"⚠️  未知的数据格式: {data.shape}")
+                        continue
+                    
+                    # 调整尺寸到目标大小
+                    print(f"目标形状: ({self.field_size}, {self.field_size})")
+                    adjusted_mode = self._resize_mode(mode, self.field_size)
+                    
+                    # 转换为torch tensor
+                    mode_tensor = torch.tensor(adjusted_mode, dtype=torch.complex64, device=self.device)
+                    print(f"✅ 成功加载并调整模式尺寸: {mode_tensor.shape}")
+                    return mode_tensor
+                    
+                except Exception as e:
+                    print(f"⚠️  加载特征模式失败: {e}")
+                    continue
         
-        # 1. 首先尝试加载你的特征模式文件
-        mmf_eigenmodes_path = "/home/shiyue/ODNN_MULTIWAVE/SAMPLE/eigenmodes_OM4.npy"
+        # 如果没有找到文件，生成高斯模式
+        print("未找到特征模式文件，生成高斯模式...")
+        return self._generate_gaussian_mode()
+    
+    def _resize_mode(self, mode, target_size):
+        """调整模式尺寸"""
+        current_shape = mode.shape
+        print(f"原始模式形状: {current_shape}")
         
-        if os.path.exists(mmf_eigenmodes_path):
-            print(f"找到特征模式文件，正在加载: {mmf_eigenmodes_path}")
-            try:
-                # 加载.npy文件
-                eigenmodes_data = np.load(mmf_eigenmodes_path)
-                print(f"成功加载特征模式数据，形状: {eigenmodes_data.shape}")
-                
-                # 提取基模（通常是第一个模式）
-                if len(eigenmodes_data.shape) == 3:
-                    fundamental_mode = eigenmodes_data[0]
-                else:
-                    fundamental_mode = eigenmodes_data
-                
-                print(f"原始模式形状: {fundamental_mode.shape}")
-                print(f"目标形状: ({self.config.field_size}, {self.config.field_size})")
-                
-                # 🔧 关键修复：调整尺寸以匹配配置
-                fundamental_mode_resized = self.resize_mode_field(
-                    fundamental_mode, 
-                    target_size=self.config.field_size
-                )
-                
-                # 转换为PyTorch张量
-                fundamental_mode_tensor = torch.tensor(
-                    fundamental_mode_resized, 
-                    dtype=torch.complex64, 
-                    device=self.device
-                )
-                
-                # 归一化
-                mode_power = torch.sum(torch.abs(fundamental_mode_tensor)**2)
-                if mode_power > 1e-10:
-                    fundamental_mode_tensor = fundamental_mode_tensor / torch.sqrt(mode_power)
-                
-                print(f"✅ 成功加载并调整模式尺寸: {fundamental_mode_tensor.shape}")
-                return {
-                    'fundamental_mode': fundamental_mode_tensor,
-                    'source': 'eigenmodes_OM4.npy_resized',
-                    'original_shape': eigenmodes_data.shape,
-                    'resized_shape': fundamental_mode_tensor.shape,
-                    'file_path': mmf_eigenmodes_path
-                }
-                
-            except Exception as e:
-                print(f"❌ 加载特征模式文件失败: {e}")
-                print("将尝试其他加载方式...")
+        # 处理非方形数据
+        if current_shape[0] != current_shape[1]:
+            print(f"⚠️  检测到非方形数据: {current_shape}")
+            # 裁剪到方形
+            min_size = min(current_shape[0], current_shape[1])
+            start_x = (current_shape[0] - min_size) // 2
+            start_y = (current_shape[1] - min_size) // 2
+            mode = mode[start_x:start_x+min_size, start_y:start_y+min_size]
+            print(f"🔧 裁剪到方形: {min_size}x{min_size}")
+            print(f"裁剪后形状: {mode.shape}")
         
-        # 继续其他加载方式...
-        return self.generate_gaussian_fundamental_mode()
-
-    # 在你的数据生成器中替换resize_mode_field方法
-    def resize_mode_field(self, mode_field, target_size):
-        """正确处理不规则尺寸的模式场调整"""
-        import torch.nn.functional as F
-        
-        original_shape = mode_field.shape
-        print(f"原始模式形状: {original_shape}")
-        
-        # 🔧 处理不规则形状 - 确保是方形
-        if len(original_shape) == 2:
-            if original_shape[0] != original_shape[1]:
-                # 如果不是方形，取最小尺寸创建方形
-                min_size = min(original_shape[0], original_shape[1])
-                print(f"⚠️  检测到非方形数据: {original_shape}")
-                print(f"🔧 裁剪到方形: {min_size}x{min_size}")
-                
-                # 中心裁剪到方形
-                center_y, center_x = original_shape[0]//2, original_shape[1]//2
-                half_size = min_size // 2
-                
-                mode_field = mode_field[
-                    center_y-half_size:center_y+half_size,
-                    center_x-half_size:center_x+half_size
-                ]
-                print(f"裁剪后形状: {mode_field.shape}")
-        
-        current_size = mode_field.shape[0]
+        current_size = mode.shape[0]
         print(f"当前尺寸: {current_size}x{current_size}")
         print(f"目标尺寸: {target_size}x{target_size}")
         
         if current_size == target_size:
-            print("尺寸已匹配，无需调整")
-            return mode_field
+            print("✅ 尺寸匹配，无需调整")
+            return mode
         
-        # 转换为tensor并调整尺寸
-        if isinstance(mode_field, np.ndarray):
-            mode_tensor = torch.tensor(mode_field, dtype=torch.complex64)
+        # 使用插值调整尺寸
+        x_old = np.linspace(0, 1, current_size)
+        y_old = np.linspace(0, 1, current_size)
+        X_old, Y_old = np.meshgrid(x_old, y_old)
+        
+        x_new = np.linspace(0, 1, target_size)
+        y_new = np.linspace(0, 1, target_size)
+        X_new, Y_new = np.meshgrid(x_new, y_new)
+        
+        # 处理复数数据
+        if np.iscomplexobj(mode):
+            real_part = griddata((X_old.flatten(), Y_old.flatten()), 
+                               mode.real.flatten(), 
+                               (X_new, Y_new), method='cubic', fill_value=0)
+            imag_part = griddata((X_old.flatten(), Y_old.flatten()), 
+                               mode.imag.flatten(), 
+                               (X_new, Y_new), method='cubic', fill_value=0)
+            resized_mode = real_part + 1j * imag_part
         else:
-            mode_tensor = mode_field
+            resized_mode = griddata((X_old.flatten(), Y_old.flatten()), 
+                                  mode.flatten(), 
+                                  (X_new, Y_new), method='cubic', fill_value=0)
         
-        # 添加batch维度 [1, 1, H, W]
-        mode_tensor = mode_tensor.unsqueeze(0).unsqueeze(0)
-        
-        # 分别处理实部和虚部
-        real_part = F.interpolate(
-            mode_tensor.real, 
-            size=(target_size, target_size), 
-            mode='bilinear', 
-            align_corners=False
-        )
-        imag_part = F.interpolate(
-            mode_tensor.imag, 
-            size=(target_size, target_size), 
-            mode='bilinear', 
-            align_corners=False
-        )
-        
-        # 重新组合并移除batch维度
-        resized_tensor = (real_part + 1j * imag_part).squeeze(0).squeeze(0)
-        
-        result = resized_tensor.numpy() if isinstance(mode_field, np.ndarray) else resized_tensor
-        print(f"✅ 调整完成，最终尺寸: {result.shape}")
-        
-        return result
-
-
-    def resize_mode_field_torch(self, mode_field, target_size):
-        """使用PyTorch调整模式场尺寸（替代方案）"""
-        import torch.nn.functional as F
-        
-        # 转换为tensor
-        if isinstance(mode_field, np.ndarray):
-            mode_tensor = torch.tensor(mode_field, dtype=torch.complex64)
-        else:
-            mode_tensor = mode_field
-        
-        # 添加batch和channel维度
-        if len(mode_tensor.shape) == 2:
-            mode_tensor = mode_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-        
-        # 分别处理实部和虚部
-        real_part = mode_tensor.real
-        imag_part = mode_tensor.imag
-        
-        # 使用双线性插值调整大小
-        real_resized = F.interpolate(real_part, size=(target_size, target_size), 
-                                    mode='bilinear', align_corners=False)
-        imag_resized = F.interpolate(imag_part, size=(target_size, target_size), 
-                                    mode='bilinear', align_corners=False)
-        
-        # 重新组合复数
-        resized_tensor = real_resized + 1j * imag_resized
-        
-        # 移除额外维度
-        resized_tensor = resized_tensor.squeeze(0).squeeze(0)
-        
-        return resized_tensor.numpy() if isinstance(mode_field, np.ndarray) else resized_tensor
-
-
-    def generate_gaussian_fundamental_mode(self):
-        """生成基模的高斯近似"""
-        print("正在生成高斯近似基模...")
-        
-        # 创建坐标网格
-        x = torch.linspace(-self.config.field_size//2, self.config.field_size//2, 
-                        self.config.field_size, device=self.device) * self.config.pixel_size
-        y = torch.linspace(-self.config.field_size//2, self.config.field_size//2, 
-                        self.config.field_size, device=self.device) * self.config.pixel_size
+        print(f"✅ 调整完成，最终尺寸: {resized_mode.shape}")
+        return resized_mode
+    
+    def _generate_gaussian_mode(self):
+        """生成高斯基模"""
+        print("生成高斯基模...")
+        x = torch.linspace(-1, 1, self.field_size, device=self.device)
+        y = torch.linspace(-1, 1, self.field_size, device=self.device)
         X, Y = torch.meshgrid(x, y, indexing='ij')
-        R = torch.sqrt(X**2 + Y**2)
         
-        # 高斯光束腰（基于MMF参数）
-        w0 = self.core_radius / 2  # 光束腰约为纤芯半径的一半
+        # 高斯光束参数
+        w0 = 0.3  # 束腰半径
+        gaussian = torch.exp(-(X**2 + Y**2) / w0**2)
         
-        # 生成高斯基模
-        fundamental_mode = torch.exp(-R**2 / w0**2).to(torch.complex64)
-        
-        # 归一化
-        mode_power = torch.sum(torch.abs(fundamental_mode)**2)
-        if mode_power > 1e-10:
-            fundamental_mode = fundamental_mode / torch.sqrt(mode_power)
-        
-        print(f"高斯基模生成完成，光束腰: {w0*1e6:.1f} μm")
-        
-        return {
-            'fundamental_mode': fundamental_mode,
-            'beam_waist': w0
-        }
-   
-    def generate_gaussian_fundamental_mode(self):
-        """Generate a Gaussian approximation of the fundamental mode"""
-        # Create coordinate grid
-        x = torch.linspace(-self.config.field_size//2, self.config.field_size//2, 
-                          self.config.field_size, device=self.device) * self.config.pixel_size
-        y = torch.linspace(-self.config.field_size//2, self.config.field_size//2, 
-                          self.config.field_size, device=self.device) * self.config.pixel_size
-        X, Y = torch.meshgrid(x, y, indexing='ij')
-        R = torch.sqrt(X**2 + Y**2)
-        
-        # Gaussian beam waist (approximation for fundamental mode)
-        w0 = self.core_radius / 2  # Beam waist
-        
-        # Generate Gaussian fundamental mode
-        fundamental_mode = torch.exp(-R**2 / w0**2).to(torch.complex64)
-        
-        # Normalize
-        fundamental_mode = fundamental_mode / torch.sqrt(torch.sum(torch.abs(fundamental_mode)**2))
-        
-        return {'fundamental_mode': fundamental_mode}
+        return gaussian.to(torch.complex64)
     
     def generate_input_fields(self):
-        """Generate input fields for both wavelengths"""
-        input_fields = []
+        """生成多波长输入场"""
+        fields = []
         
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            # Use fundamental mode as base
-            base_field = self.mmf_mode_data['fundamental_mode'].clone()
+        for wavelength in self.wavelengths:
+            # 为每个波长生成略有不同的模式
+            wl_factor = wavelength / self.wavelengths[0]  # 归一化波长因子
             
-            # Add wavelength-dependent phase variation
-            phase_variation = torch.exp(1j * torch.rand(1, device=self.device) * 2 * np.pi)
-            input_field = base_field * phase_variation
+            # 根据波长调整模式尺寸（色散效应）
+            if hasattr(self.config, 'use_dispersion') and self.config.use_dispersion:
+                scaled_mode = self._apply_dispersion(self.base_mode, wl_factor)
+            else:
+                scaled_mode = self.base_mode
             
-            # Add some random amplitude variation (±10%)
-            amp_variation = 0.9 + 0.2 * torch.rand(1, device=self.device)
-            input_field = input_field * amp_variation
-            
-            input_fields.append(input_field)
+            # 归一化
+            scaled_mode = scaled_mode / torch.sqrt(torch.sum(torch.abs(scaled_mode)**2))
+            fields.append(scaled_mode)
         
-        return input_fields
+        return torch.stack(fields)
     
-    def generate_target_labels(self, input_fields):
-        """Generate target intensity distributions"""
-        target_labels = []
+    def _apply_dispersion(self, mode, wl_factor):
+        """应用色散效应"""
+        # 简单的色散模型：不同波长有不同的传播常数
+        dispersion_factor = 1.0 + 0.1 * (wl_factor - 1.0)
         
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            # Create target distribution (Gaussian spot at specified offset)
-            target = torch.zeros(self.config.field_size, self.config.field_size, device=self.device)
-            
-            # Get target position
-            offset_x, offset_y = self.config.offsets[wl_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
-            
-            # Create coordinate grids
-            x = torch.arange(self.config.field_size, device=self.device) - center_x
-            y = torch.arange(self.config.field_size, device=self.device) - center_y
-            X, Y = torch.meshgrid(x, y, indexing='ij')
-            
-            # Gaussian target spot
-            sigma = self.config.detect_size / 4  # Spot size
-            target = torch.exp(-(X**2 + Y**2) / (2 * sigma**2))
-            
-            # Normalize
-            target = target / torch.sum(target)
-            
-            target_labels.append(target)
+        # 在傅里叶域应用色散
+        mode_fft = torch.fft.fft2(mode)
         
-        return target_labels
+        # 创建频率网格
+        kx = torch.fft.fftfreq(self.field_size, device=self.device)
+        ky = torch.fft.fftfreq(self.field_size, device=self.device)
+        KX, KY = torch.meshgrid(kx, ky, indexing='ij')
+        k_squared = KX**2 + KY**2
+        
+        # 应用色散相位
+        dispersion_phase = torch.exp(1j * dispersion_factor * k_squared)
+        dispersed_fft = mode_fft * dispersion_phase
+        
+        # 逆傅里叶变换
+        dispersed_mode = torch.fft.ifft2(dispersed_fft)
+        
+        return dispersed_mode
     
     def visualize_separation_concept(self, save_path=None):
-        """Visualize the wavelength separation concept"""
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        
-        # Generate sample input fields
-        input_fields = self.generate_input_fields()
-        
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            wavelength_nm = int(wavelength * 1e9)
+        """可视化波长分离概念（无GUI版本）"""
+        try:
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            fig.suptitle('多波长分离概念图', fontsize=16)
             
-            # Input field intensity
-            ax_input = axes[wl_idx, 0]
-            input_intensity = torch.abs(input_fields[wl_idx])**2
-            im_input = ax_input.imshow(input_intensity.cpu().numpy(), cmap='viridis')
-            ax_input.set_title(f'输入场强度\n波长: {wavelength_nm}nm')
-            ax_input.axis('off')
-            plt.colorbar(im_input, ax=ax_input, fraction=0.046)
-            
-            # Target region visualization
-            ax_target = axes[wl_idx, 1]
-            # Create a visualization showing where this wavelength should go
-            target_vis = torch.zeros(self.config.field_size, self.config.field_size, device=self.device)
-            
-            # Get target position
-            offset_x, offset_y = self.config.offsets[wl_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
-            
-            # Create target region
-            x_start = max(0, center_x - self.config.detect_size // 2)
-            x_end = min(self.config.field_size, center_x + self.config.detect_size // 2)
-            y_start = max(0, center_y - self.config.detect_size // 2)
-            y_end = min(self.config.field_size, center_y + self.config.detect_size // 2)
-            
-            target_vis[y_start:y_end, x_start:x_end] = 1.0
-            
-            im_target = ax_target.imshow(target_vis.cpu().numpy(), cmap='hot')
-            ax_target.set_title(f'目标检测区域\n波长: {wavelength_nm}nm')
-            ax_target.axis('off')
-            plt.colorbar(im_target, ax=ax_target, fraction=0.046)
-            
-            # Conceptual output (ideal case)
-            ax_output = axes[wl_idx, 2]
-            # Create ideal output where energy is concentrated in target region
-            ideal_output = torch.zeros(self.config.field_size, self.config.field_size, device=self.device)
-            
-            # Create Gaussian spot in target region
-            x = torch.arange(self.config.field_size, device=self.device) - center_x
-            y = torch.arange(self.config.field_size, device=self.device) - center_y
-            X, Y = torch.meshgrid(x, y, indexing='ij')
-            
-            sigma = self.config.detect_size / 4
-            ideal_output = torch.exp(-(X**2 + Y**2) / (2 * sigma**2))
-            
-            im_output = ax_output.imshow(ideal_output.cpu().numpy(), cmap='plasma')
-            ax_output.set_title(f'理想输出分布\n波长: {wavelength_nm}nm')
-            ax_output.axis('off')
-            plt.colorbar(im_output, ax=ax_output, fraction=0.046)
-        
-        plt.suptitle('双波长分离概念图', fontsize=16, fontweight='bold')
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Separation concept visualization saved to: {save_path}")
-            plt.close()
-        else:
-            plt.show()
-    
-    def visualize_detector_layout(self, save_path=None):
-        """Visualize the detector layout and target regions"""
-        fig, ax = plt.subplots(figsize=(10, 10))
-        
-        # Create field background
-        field_background = torch.zeros(self.config.field_size, self.config.field_size, device=self.device)
-        ax.imshow(field_background.cpu().numpy(), cmap='gray', alpha=0.3)
-        
-        # Colors for different wavelengths
-        colors = ['blue', 'red', 'green', 'orange']
-        
-        # Draw target regions for each wavelength
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            wavelength_nm = int(wavelength * 1e9)
-            color = colors[wl_idx % len(colors)]
-            
-            # Get target position
-            offset_x, offset_y = self.config.offsets[wl_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
-            
-            # Draw target region rectangle
-            rect = plt.Rectangle(
-                (center_x - self.config.detect_size // 2, center_y - self.config.detect_size // 2),
-                self.config.detect_size, self.config.detect_size,
-                fill=True, facecolor=color, alpha=0.3, edgecolor=color, linewidth=3
-            )
-            ax.add_patch(rect)
-            
-            # Add wavelength label
-            ax.text(center_x, center_y, f'{wavelength_nm}nm', 
-                   ha='center', va='center', fontsize=12, fontweight='bold', color='white')
-            
-            # Add arrow pointing to the region
-            arrow_start_x = self.config.field_size // 2
-            arrow_start_y = self.config.field_size // 2
-            arrow_dx = offset_x * 0.7
-            arrow_dy = offset_y * 0.7
-            
-            ax.annotate('', xy=(arrow_start_x + arrow_dx, arrow_start_y + arrow_dy),
-                       xytext=(arrow_start_x, arrow_start_y),
-                       arrowprops=dict(arrowstyle='->', color=color, lw=2))
-        
-        # Draw field boundary
-        field_boundary = plt.Rectangle((0, 0), self.config.field_size, self.config.field_size,
-                                     fill=False, edgecolor='black', linestyle='--', linewidth=2)
-        ax.add_patch(field_boundary)
-        
-        # Mark center
-        ax.plot(self.config.field_size // 2, self.config.field_size // 2, 'k+', markersize=15, markeredgewidth=3)
-        ax.text(self.config.field_size // 2 + 5, self.config.field_size // 2 + 5, '中心', fontsize=12)
-        
-        ax.set_xlim(0, self.config.field_size)
-        ax.set_ylim(0, self.config.field_size)
-        ax.set_xlabel('X (像素)', fontsize=12)
-        ax.set_ylabel('Y (像素)', fontsize=12)
-        ax.set_title('检测器布局和目标区域', fontsize=14, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        
-        # Add legend
-        legend_elements = []
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            wavelength_nm = int(wavelength * 1e9)
-            color = colors[wl_idx % len(colors)]
-            legend_elements.append(plt.Rectangle((0, 0), 1, 1, facecolor=color, alpha=0.3, 
-                                               edgecolor=color, label=f'{wavelength_nm}nm'))
-        ax.legend(handles=legend_elements, loc='upper right')
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Detector layout visualization saved to: {save_path}")
-            plt.close()
-        else:
-            plt.show()
-    
-    def create_dataset(self, num_samples=1000):
-        """Create dataset of input-target pairs"""
-        dataset = []
-        
-        for _ in range(num_samples):
-            # Generate input fields
+            # 生成输入场
             input_fields = self.generate_input_fields()
             
-            # Generate corresponding target labels
-            target_labels = self.generate_target_labels(input_fields)
+            # 显示输入场
+            for i, (wavelength, field) in enumerate(zip(self.wavelengths, input_fields)):
+                wl_nm = int(wavelength * 1e9)
+                intensity = torch.abs(field).cpu().numpy()
+                
+                ax = axes[0, i]
+                im = ax.imshow(intensity, cmap='hot')
+                ax.set_title(f'输入场 - {wl_nm}nm')
+                ax.set_xlabel('X (pixels)')
+                ax.set_ylabel('Y (pixels)')
+                plt.colorbar(im, ax=ax)
             
-            dataset.append({
-                'input_fields': input_fields,
-                'target_labels': target_labels
-            })
-        
-        return dataset
+            # 显示检测区域布局
+            ax = axes[1, 0]
+            detection_layout = np.zeros((self.field_size, self.field_size))
+            
+            center = self.field_size // 2
+            for i, offset in enumerate(self.config.offsets):
+                detect_center_x = center + offset[0]
+                detect_center_y = center + offset[1]
+                
+                half_size = self.config.detectsize // 2
+                x_start = max(0, detect_center_x - half_size)
+                x_end = min(self.field_size, detect_center_x + half_size)
+                y_start = max(0, detect_center_y - half_size)
+                y_end = min(self.field_size, detect_center_y + half_size)
+                
+                detection_layout[x_start:x_end, y_start:y_end] = i + 1
+            
+            im = ax.imshow(detection_layout, cmap='tab10')
+            ax.set_title('检测区域布局')
+            ax.set_xlabel('X (pixels)')
+            ax.set_ylabel('Y (pixels)')
+            plt.colorbar(im, ax=ax)
+            
+            # 显示波长信息
+            ax = axes[1, 1]
+            ax.axis('off')
+            info_text = f"波长配置:\n"
+            for i, wl in enumerate(self.wavelengths):
+                wl_nm = int(wl * 1e9)
+                offset = self.config.offsets[i]
+                info_text += f"  {wl_nm}nm: 偏移 {offset}\n"
+            
+            info_text += f"\n系统参数:\n"
+            info_text += f"  场尺寸: {self.field_size}×{self.field_size}\n"
+            info_text += f"  检测尺寸: {self.config.detectsize}×{self.config.detectsize}\n"
+            info_text += f"  像素尺寸: {self.config.pixel_size*1e6:.1f} μm"
+            
+            ax.text(0.1, 0.9, info_text, transform=ax.transAxes, 
+                   fontsize=12, verticalalignment='top', fontfamily='monospace')
+            
+            plt.tight_layout()
+            
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"✅ 分离概念图已保存: {save_path}")
+            
+            plt.close()  # 关闭图形，释放内存
+            
+        except Exception as e:
+            print(f"⚠️  分离概念可视化失败: {e}")
     
-    def create_dataloader(self, num_samples=1000, batch_size=4, shuffle=True):
-        """Create DataLoader for training"""
-        dataset = self.create_dataset(num_samples)
-        
-        class CustomDataset(Dataset):
-            def __init__(self, data):
-                self.data = data
+    def visualize_detector_layout(self, save_path=None):
+        """可视化检测器布局（无GUI版本）"""
+        try:
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
             
-            def __len__(self):
-                return len(self.data)
+            # 创建检测器布局
+            layout = np.zeros((self.field_size, self.field_size))
+            colors = ['red', 'blue', 'green', 'orange', 'purple']
             
-            def __getitem__(self, idx):
-                return self.data[idx]
-        
-        custom_dataset = CustomDataset(dataset)
-        return DataLoader(custom_dataset, batch_size=batch_size, shuffle=shuffle)
-    
-    def visualize_data(self, save_path=None):
-        """Visualize input data and target labels"""
-        # Generate sample data
-        input_fields = self.generate_input_fields()
-        target_labels = self.generate_target_labels(input_fields)
-        
-        # Create visualization
-        fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-        
-        for wl_idx, wl in enumerate(self.config.wavelengths):
-            # Input field amplitude
-            ax_amp = axes[wl_idx, 0]
-            input_amp = torch.abs(input_fields[wl_idx])
-            im_amp = ax_amp.imshow(input_amp.cpu().numpy(), cmap='viridis')
-            ax_amp.set_title(f'Wavelength {int(wl*1e9)}nm\nInput Field Amplitude')
-            ax_amp.axis('off')
-            plt.colorbar(im_amp, ax=ax_amp)
+            center = self.field_size // 2
             
-            # Input field phase
-            ax_phase = axes[wl_idx, 1]
-            input_phase = torch.angle(input_fields[wl_idx])
-            im_phase = ax_phase.imshow(input_phase.cpu().numpy(), cmap='hsv', vmin=-np.pi, vmax=np.pi)
-            ax_phase.set_title(f'Wavelength {int(wl*1e9)}nm\nInput Field Phase')
-            ax_phase.axis('off')
-            plt.colorbar(im_phase, ax=ax_phase)
+            for i, (wavelength, offset) in enumerate(zip(self.wavelengths, self.config.offsets)):
+                wl_nm = int(wavelength * 1e9)
+                
+                detect_center_x = center + offset[0]
+                detect_center_y = center + offset[1]
+                
+                half_size = self.config.detectsize // 2
+                x_start = max(0, detect_center_x - half_size)
+                x_end = min(self.field_size, detect_center_x + half_size)
+                y_start = max(0, detect_center_y - half_size)
+                y_end = min(self.field_size, detect_center_y + half_size)
+                
+                layout[x_start:x_end, y_start:y_end] = i + 1
+                
+                # 添加标签
+                ax.text(detect_center_y, detect_center_x, f'{wl_nm}nm', 
+                       ha='center', va='center', fontsize=12, fontweight='bold',
+                       color='white', bbox=dict(boxstyle='round', facecolor=colors[i % len(colors)], alpha=0.7))
             
-            # Target intensity distribution
-            ax_target = axes[wl_idx, 2]
-            im_target = ax_target.imshow(target_labels[wl_idx].cpu().numpy(), cmap='hot')
-            ax_target.set_title(f'Wavelength {int(wl*1e9)}nm\nTarget Distribution')
-            ax_target.axis('off')
-            plt.colorbar(im_target, ax=ax_target)
+            im = ax.imshow(layout, cmap='Set3', alpha=0.8)
+            ax.set_title('检测器布局图', fontsize=16)
+            ax.set_xlabel('Y (pixels)', fontsize=12)
+            ax.set_ylabel('X (pixels)', fontsize=12)
             
-            # Target region overlay
-            ax_overlay = axes[wl_idx, 3]
-            input_intensity = torch.abs(input_fields[wl_idx])**2
-            im_overlay = ax_overlay.imshow(input_intensity.cpu().numpy(), cmap='gray', alpha=0.7)
+            # 添加网格
+            ax.grid(True, alpha=0.3)
             
-            # Add target region rectangle
-            offset_x, offset_y = self.config.offsets[wl_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
+            # 添加中心标记
+            ax.plot(center, center, 'k+', markersize=15, markeredgewidth=3)
+            ax.text(center, center-20, '光轴中心', ha='center', va='top', fontsize=10)
             
-            rect = plt.Rectangle(
-                (center_x - self.config.detect_size//2, center_y - self.config.detect_size//2),
-                self.config.detect_size, self.config.detect_size,
-                fill=False, edgecolor='red', linewidth=2
-            )
-            ax_overlay.add_patch(rect)
-            ax_overlay.set_title(f'Wavelength {int(wl*1e9)}nm\nTarget Region Overlay')
-            ax_overlay.axis('off')
-        
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"Data visualization saved to: {save_path}")
-            plt.close()
-        else:
-            plt.show()
-    
-    def visualize_mmf_modes(self, save_path=None):
-        """Visualize MMF mode profiles"""
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        
-        # Fundamental mode amplitude
-        fundamental_mode = self.mmf_mode_data['fundamental_mode']
-        
-        ax_amp = axes[0]
-        mode_amp = torch.abs(fundamental_mode)
-        im_amp = ax_amp.imshow(mode_amp.cpu().numpy(), cmap='viridis')
-        ax_amp.set_title('Fundamental Mode\nAmplitude')
-        ax_amp.axis('off')
-        plt.colorbar(im_amp, ax=ax_amp)
-        
-        # Fundamental mode phase
-        ax_phase = axes[1]
-        mode_phase = torch.angle(fundamental_mode)
-        im_phase = ax_phase.imshow(mode_phase.cpu().numpy(), cmap='hsv', vmin=-np.pi, vmax=np.pi)
-        ax_phase.set_title('Fundamental Mode\nPhase')
-        ax_phase.axis('off')
-        plt.colorbar(im_phase, ax=ax_phase)
-        
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"MMF modes visualization saved to: {save_path}")
-            plt.close()
-        else:
-            plt.show()
-    
-    def get_mode_coupling_efficiency(self, output_field, target_mode):
-        """Calculate mode coupling efficiency"""
-        # Normalize fields
-        output_norm = output_field / torch.sqrt(torch.sum(torch.abs(output_field)**2))
-        target_norm = target_mode / torch.sqrt(torch.sum(torch.abs(target_mode)**2))
-        
-        # Calculate overlap integral
-        overlap = torch.sum(torch.conj(output_norm) * target_norm)
-        efficiency = torch.abs(overlap)**2
-        
-        return efficiency.item()
-    
-    def calculate_separation_metrics(self, output_fields):
-        """Calculate wavelength separation performance metrics"""
-        metrics = {}
-        
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            field = output_fields[wl_idx]
-            intensity = torch.abs(field)**2
+            plt.colorbar(im, ax=ax, label='检测区域ID')
+            plt.tight_layout()
             
-            # Get target region
-            offset_x, offset_y = self.config.offsets[wl_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
+            if save_path:
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"✅ 检测器布局图已保存: {save_path}")
             
-            x_start = center_x - self.config.detect_size // 2
-            x_end = center_x + self.config.detect_size // 2
-            y_start = center_y - self.config.detect_size // 2
-            y_end = center_y + self.config.detect_size // 2
+            plt.close()  # 关闭图形，释放内存
             
-            # Calculate metrics
-            total_power = torch.sum(intensity).item()
-            target_power = torch.sum(intensity[y_start:y_end, x_start:x_end]).item()
-            
-            efficiency = target_power / total_power if total_power > 0 else 0
-            
-            # Calculate crosstalk to other wavelength regions
-            crosstalk_powers = []
-            for other_wl_idx in range(len(self.config.wavelengths)):
-                if other_wl_idx != wl_idx:
-                    other_offset_x, other_offset_y = self.config.offsets[other_wl_idx]
-                    other_center_x = self.config.field_size // 2 + other_offset_x
-                    other_center_y = self.config.field_size // 2 + other_offset_y
-                    
-                    other_x_start = other_center_x - self.config.detect_size // 2
-                    other_x_end = other_center_x + self.config.detect_size // 2
-                    other_y_start = other_center_y - self.config.detect_size // 2
-                    other_y_end = other_center_y + self.config.detect_size // 2
-                    
-                    crosstalk_power = torch.sum(intensity[other_y_start:other_y_end, other_x_start:other_x_end]).item()
-                    crosstalk_powers.append(crosstalk_power / total_power if total_power > 0 else 0)
-            
-            avg_crosstalk = np.mean(crosstalk_powers) if crosstalk_powers else 0
-            
-            metrics[f"wavelength_{int(wavelength*1e9)}nm"] = {
-                'efficiency': efficiency,
-                'crosstalk': avg_crosstalk,
-                'extinction_ratio': efficiency / (avg_crosstalk + 1e-10)
-            }
-        
-        return metrics
-    
-    def save_mmf_modes(self, save_path=None):
-        """Save MMF mode data to file"""
-        if save_path is None:
-            save_path = os.path.join(self.config.save_dir, 'mmf_modes.npz')
-        
-        # Ensure save directory exists
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
-        # Convert to CPU numpy arrays for saving
-        np.savez(save_path, 
-                 fundamental_mode=self.mmf_mode_data['fundamental_mode'].cpu().numpy())
-        print(f"MMF modes saved to: {save_path}")
-    
-    # Backward compatibility methods
-    def generate_input_data(self):
-        """Generate input data (compatibility method)"""
-        return self.generate_input_fields()
-
-# 为了向后兼容，保留SimpleDataGenerator类
-class SimpleDataGenerator(SingleModeDualWavelengthDataGenerator):
-    """Backward compatibility wrapper"""
-    pass
+        except Exception as e:
+            print(f"⚠️  检测器布局可视化失败: {e}")

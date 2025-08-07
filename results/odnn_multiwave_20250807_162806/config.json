@@ -1,0 +1,26 @@
+{
+  "field_size": 50,
+  "wavelengths": [
+    4.5e-07,
+    5.5e-07,
+    6.5e-07
+  ],
+  "num_layers": 2,
+  "epochs": 1000,
+  "learning_rate": 0.001,
+  "batch_size": 1,
+  "detectsize": 5,
+  "distance": 15,
+  "num_regions": 10,
+  "loss_weights": {
+    "efficiency": 1.0,
+    "separation": 0.5,
+    "crosstalk": 0.3,
+    "concentration": 0.2,
+    "smoothing": 0.1
+  },
+  "pixel_size": 1e-06,
+  "propagation_distance": 0.001,
+  "device": "cpu",
+  "timestamp": "2025-08-07T16:28:12.744487"
+}

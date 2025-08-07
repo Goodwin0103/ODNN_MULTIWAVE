@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./ODNN_w/utils"
+    ]
+}
