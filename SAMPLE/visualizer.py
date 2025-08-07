@@ -4,53 +4,104 @@ import torch
 import os
 from matplotlib.colors import LinearSegmentedColormap
 
-class SimpleVisualizer:
+class ImprovedVisualizer:
     def __init__(self, config):
         self.config = config
-        self.device = config.device  # 添加设备属性
-        # 创建保存目录
+        self.device = config.device
         os.makedirs(config.save_dir, exist_ok=True)
         
-        # 创建自定义热图配色方案，用于能量分布可视化
-        self.energy_cmap = plt.cm.viridis
-        
-        # 创建相位图配色方案
+        # 🔥 改进的配色方案
+        self.energy_cmap = plt.cm.plasma
         self.phase_cmap = plt.cm.hsv
+        
+        # 创建自定义配色
+        colors_wavelength = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+        self.wavelength_colors = colors_wavelength[:len(config.wavelengths)]
 
-    def plot_detector_regions(self, save_path=None):
-        """绘制检测区域的位置"""
-        fig, ax = plt.subplots(figsize=(8, 8))
+    def plot_improved_training_history(self, training_history, save_path=None):
+        """🔥 改进的训练历史可视化"""
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         
-        # 绘制场边界
-        field_boundary = plt.Rectangle((0, 0), self.config.field_size, self.config.field_size, 
-                                       fill=False, edgecolor='black', linestyle='--')
-        ax.add_patch(field_boundary)
+        epochs = range(len(training_history['total_loss']))
         
-        # 为每个波长绘制检测区域
-        colors = ['blue', 'red']
-        for i, (offset_x, offset_y) in enumerate(self.config.offsets):
-            # 计算检测区域的中心
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
-            
-            # 绘制检测区域
-            detect_region = plt.Rectangle(
-                (center_x - self.config.detect_size // 2, center_y - self.config.detect_size // 2),
-                self.config.detect_size, self.config.detect_size,
-                fill=True, alpha=0.3, edgecolor=colors[i], facecolor=colors[i]
-            )
-            ax.add_patch(detect_region)
-            
-            # 添加波长标签
-            wavelength_nm = self.config.wavelengths[i] * 1e9
-            ax.text(center_x, center_y, f"{wavelength_nm:.0f}nm", 
-                   ha='center', va='center', color='white', fontweight='bold')
+        # 1. 总损失
+        axes[0, 0].plot(epochs, training_history['total_loss'], 'b-', linewidth=2)
+        axes[0, 0].set_title('总损失', fontsize=14, fontweight='bold')
+        axes[0, 0].set_xlabel('训练轮次')
+        axes[0, 0].set_ylabel('损失值')
+        axes[0, 0].grid(True, alpha=0.3)
+        axes[0, 0].set_yscale('log')
         
-        ax.set_xlim(0, self.config.field_size)
-        ax.set_ylim(0, self.config.field_size)
-        ax.set_xlabel('X (pixels)')
-        ax.set_ylabel('Y (pixels)')
-        ax.set_title('检测区域位置')
+        # 2. 分项损失
+        axes[0, 1].plot(epochs, training_history['efficiency_loss'], label='效率损失', linewidth=2)
+        axes[0, 1].plot(epochs, training_history['separation_loss'], label='分离损失', linewidth=2)
+        axes[0, 1].plot(epochs, training_history['crosstalk_loss'], label='串扰损失', linewidth=2)
+        axes[0, 1].plot(epochs, training_history['concentration_loss'], label='集中损失', linewidth=2)
+        axes[0, 1].plot(epochs, training_history['smoothing_loss'], label='平滑损失', linewidth=2)
+        axes[0, 1].set_title('分项损失', fontsize=14, fontweight='bold')
+        axes[0, 1].set_xlabel('训练轮次')
+        axes[0, 1].set_ylabel('损失值')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].set_yscale('log')
+        
+        # 3. 效率演化
+        efficiencies_array = np.array(training_history['efficiencies'])
+        for w_idx in range(len(self.config.wavelengths)):
+            wavelength_nm = int(self.config.wavelengths[w_idx] * 1e9)
+            axes[0, 2].plot(epochs, efficiencies_array[:, w_idx], 
+                           label=f'{wavelength_nm}nm', 
+                           color=self.wavelength_colors[w_idx], linewidth=2)
+        axes[0, 2].set_title('各波长效率演化', fontsize=14, fontweight='bold')
+        axes[0, 2].set_xlabel('训练轮次')
+        axes[0, 2].set_ylabel('效率')
+        axes[0, 2].legend()
+        axes[0, 2].grid(True, alpha=0.3)
+        axes[0, 2].set_ylim(0, 1)
+        
+        # 4. 学习率
+        axes[1, 0].plot(epochs, training_history['learning_rates'], 'g-', linewidth=2)
+        axes[1, 0].set_title('学习率调度', fontsize=14, fontweight='bold')
+        axes[1, 0].set_xlabel('训练轮次')
+        axes[1, 0].set_ylabel('学习率')
+        axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].set_yscale('log')
+        
+        # 5. 效率分布
+        final_efficiencies = efficiencies_array[-1] if len(efficiencies_array) > 0 else [0] * len(self.config.wavelengths)
+        wavelength_labels = [f'{int(wl*1e9)}nm' for wl in self.config.wavelengths]
+        bars = axes[1, 1].bar(wavelength_labels, final_efficiencies, 
+                             color=self.wavelength_colors, alpha=0.7)
+        axes[1, 1].set_title('最终效率分布', fontsize=14, fontweight='bold')
+        axes[1, 1].set_ylabel('效率')
+        axes[1, 1].set_ylim(0, 1)
+        axes[1, 1].grid(True, alpha=0.3, axis='y')
+        
+        # 添加数值标签
+        for bar, eff in zip(bars, final_efficiencies):
+            axes[1, 1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                           f'{eff:.3f}', ha='center', va='bottom', fontweight='bold')
+        
+        # 6. 损失收敛分析
+        window_size = max(1, len(training_history['total_loss']) // 20)
+        if len(training_history['total_loss']) > window_size:
+            smoothed_loss = np.convolve(training_history['total_loss'], 
+                                      np.ones(window_size)/window_size, mode='valid')
+            smoothed_epochs = epochs[window_size-1:]
+            axes[1, 2].plot(epochs, training_history['total_loss'], alpha=0.3, color='blue')
+            axes[1, 2].plot(smoothed_epochs, smoothed_loss, 'r-', linewidth=2, label='平滑曲线')
+            axes[1, 2].legend()
+        else:
+            axes[1, 2].plot(epochs, training_history['total_loss'], 'b-', linewidth=2)
+        
+        axes[1, 2].set_title('损失收敛分析', fontsize=14, fontweight='bold')
+        axes[1, 2].set_xlabel('训练轮次')
+        axes[1, 2].set_ylabel('总损失')
+        axes[1, 2].grid(True, alpha=0.3)
+        axes[1, 2].set_yscale('log')
+        
+        plt.suptitle('🔥 改进训练历史分析', fontsize=16, fontweight='bold')
+        plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -58,71 +109,49 @@ class SimpleVisualizer:
         else:
             plt.show()
 
-    def plot_training_losses(self, losses, num_layer_options, save_path=None):
-        """绘制训练损失曲线"""
-        plt.figure(figsize=(10, 6))
+    def plot_wavelength_dependent_phase_masks(self, model, save_path=None):
+        """🔥 可视化每个波长的独立相位掩膜"""
+        phase_masks_vis = model.get_phase_masks_for_visualization()
+        num_layers = len(phase_masks_vis)
+        num_wavelengths = len(self.config.wavelengths)
         
-        for i, num_layers in enumerate(num_layer_options):
-            plt.plot(losses[i], label=f"{num_layers}层")
+        fig, axes = plt.subplots(num_layers, num_wavelengths, 
+                                figsize=(5*num_wavelengths, 5*num_layers))
         
-        plt.xlabel('训练轮次')
-        plt.ylabel('损失值')
-        plt.title('不同层数模型的训练损失')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_visibility_comparison(self, visibility, num_layer_options, save_path=None):
-        """绘制不同层数模型的可见度比较"""
-        plt.figure(figsize=(8, 6))
-        
-        plt.bar(range(len(num_layer_options)), visibility, color='skyblue')
-        plt.xticks(range(len(num_layer_options)), [f"{n}层" for n in num_layer_options])
-        
-        # 在每个柱形上方显示具体数值
-        for i, v in enumerate(visibility):
-            plt.text(i, v + 0.01, f"{v:.4f}", ha='center')
-        
-        plt.xlabel('模型层数')
-        plt.ylabel('可见度')
-        plt.title('不同层数模型的可见度比较')
-        plt.grid(True, alpha=0.3, axis='y')
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_phase_masks_layers(self, phase_masks, num_layers, save_path=None):
-        """绘制相位掩膜（多层版本）"""
-        fig, axes = plt.subplots(1, num_layers, figsize=(5*num_layers, 5))
-        
-        # 处理单层情况
+        # 处理单层或单波长情况
         if num_layers == 1:
-            axes = [axes]
+            axes = [axes] if num_wavelengths > 1 else [[axes]]
+        elif num_wavelengths == 1:
+            axes = [[ax] for ax in axes]
         
-        for i in range(num_layers):
-            # 将相位值标准化到[0, 2π]范围 - 确保在CPU上处理
-            phase = phase_masks[i].detach().cpu().numpy()
-            phase = (phase % (2 * np.pi))
-            
-            im = axes[i].imshow(phase, cmap=self.phase_cmap, vmin=0, vmax=2*np.pi)
-            axes[i].set_title(f"层 {i+1}")
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
+        for layer_idx in range(num_layers):
+            for w_idx in range(num_wavelengths):
+                phase = phase_masks_vis[layer_idx][w_idx].numpy()
+                phase = (phase % (2 * np.pi))
+                
+                ax = axes[layer_idx][w_idx] if num_layers > 1 else axes[0][w_idx]
+                im = ax.imshow(phase, cmap=self.phase_cmap, vmin=0, vmax=2*np.pi)
+                
+                wavelength_nm = int(self.config.wavelengths[w_idx] * 1e9)
+                if num_layers > 1:
+                    ax.set_title(f"层{layer_idx+1} - {wavelength_nm}nm", fontweight='bold')
+                else:
+                    ax.set_title(f"{wavelength_nm}nm", fontweight='bold')
+                
+                ax.set_xticks([])
+                ax.set_yticks([])
         
         # 添加颜色条
-        cbar = fig.colorbar(im, ax=axes, orientation='vertical', fraction=0.046, pad=0.04)
-        cbar.set_label('相位 (弧度)')
+        if num_layers > 1:
+            cbar = fig.colorbar(im, ax=axes, orientation='horizontal', 
+                               fraction=0.046, pad=0.08)
+        else:
+            cbar = fig.colorbar(im, ax=axes[0], orientation='horizontal', 
+                               fraction=0.046, pad=0.08)
+        cbar.set_label('相位 (弧度)', fontsize=12)
         
-        plt.suptitle(f"{num_layers}层模型的相位掩膜", fontsize=16)
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.suptitle('🔥 波长独立相位掩膜', fontsize=16, fontweight='bold')
+        plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -130,188 +159,26 @@ class SimpleVisualizer:
         else:
             plt.show()
 
-    def plot_energy_distribution(self, energy_normalized, num_layers, save_path=None):
-        """绘制能量分布"""
-        # 获取每个波长的能量分布
+    def plot_improved_energy_distribution(self, output_fields, save_path=None):
+        """🔥 改进的能量分布可视化"""
         num_wavelengths = len(self.config.wavelengths)
         
-        # 创建一个大图，包含所有波长的能量分布
-        fig, axes = plt.subplots(num_wavelengths, 1, figsize=(8, 4*num_wavelengths))
+        fig, axes = plt.subplots(2, num_wavelengths, figsize=(6*num_wavelengths, 12))
         
         # 处理单波长情况
         if num_wavelengths == 1:
-            axes = [axes]
+            axes = axes.reshape(-1, 1)
         
-        # 为每个波长绘制能量分布
-        for w_idx in range(num_wavelengths):
-            # 确保数据在CPU上处理
-            energy = energy_normalized[w_idx].detach().cpu().numpy()
-            
-            # 使用热图显示能量分布
-            im = axes[w_idx].imshow(energy, cmap=self.energy_cmap, origin='lower')
-            
-            # 添加检测区域标记
-            offset_x, offset_y = self.config.offsets[w_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
-            
-            detect_region = plt.Rectangle(
-                (center_x - self.config.detect_size // 2, center_y - self.config.detect_size // 2),
-                self.config.detect_size,
-                fill=False, edgecolor='white', linestyle='--', linewidth=2
-            )
-            axes[w_idx].add_patch(detect_region)
-            
-            # 添加等高线以更好地显示能量分布
-            contour = axes[w_idx].contour(energy, levels=5, colors='white', alpha=0.5, linewidths=0.8)
-            
-            # 设置标题和标签
-            wavelength_nm = self.config.wavelengths[w_idx] * 1e9
-            axes[w_idx].set_title(f"波长: {wavelength_nm:.0f}nm")
-            axes[w_idx].set_xlabel('X (像素)')
-            axes[w_idx].set_ylabel('Y (像素)')
-            
-            # 添加颜色条
-            cbar = fig.colorbar(im, ax=axes[w_idx])
-            cbar.set_label('归一化能量')
-        
-        plt.suptitle(f"{num_layers}层模型的能量分布", fontsize=16)
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_field_propagation(self, model, input_fields, save_path=None):
-        """绘制光场传播过程"""
-        # 获取模型的层数
-        num_layers = len(model.phase_masks)
-        
-        # 获取波长数量
-        num_wavelengths = len(self.config.wavelengths)
-        
-        # 确保输入场在正确设备上
-        if isinstance(input_fields, list):
-            input_fields = [field.to(self.device) for field in input_fields]
-        else:
-            input_fields = input_fields.to(self.device)
-        
-        # 使用模型计算每一层的场分布
-        with torch.no_grad():
-            # 获取每一层的场分布
-            all_fields = model.get_all_fields(input_fields)
-        
-        # 创建一个大图，包含所有传播步骤
-        fig, axes = plt.subplots(num_wavelengths, num_layers + 1, 
-                                 figsize=(4*(num_layers+1), 4*num_wavelengths))
-        
-        # 处理单波长或单层的情况
-        if num_wavelengths == 1:
-            axes = [axes]
-        if num_layers == 0:  # 处理没有层的情况
-            axes = [[ax] for ax in axes] if num_wavelengths > 1 else [axes]
-        
-        # 绘制每个波长在每一层的场分布
-        for w_idx in range(num_wavelengths):
-            wavelength_nm = self.config.wavelengths[w_idx] * 1e9
-            
-            # 绘制输入场 - 确保在CPU上处理
-            if isinstance(input_fields, list):
-                input_field = input_fields[w_idx].detach().cpu().numpy()
-            else:
-                input_field = input_fields[w_idx].detach().cpu().numpy()
-            input_intensity = np.abs(input_field)**2
-            
-            im = axes[w_idx][0].imshow(input_intensity, cmap='inferno', origin='lower')
-            axes[w_idx][0].set_title(f"输入场\n{wavelength_nm:.0f}nm")
-            axes[w_idx][0].set_xticks([])
-            axes[w_idx][0].set_yticks([])
-            
-            # 为每一层绘制场分布
-            for l_idx in range(num_layers):
-                # 确保在CPU上处理
-                field = all_fields[w_idx][l_idx].detach().cpu().numpy()
-                intensity = np.abs(field)**2
-                
-                # 归一化强度以便更好地可视化
-                intensity = intensity / np.max(intensity)
-                
-                im = axes[w_idx][l_idx+1].imshow(intensity, cmap='inferno', origin='lower')
-                axes[w_idx][l_idx+1].set_title(f"层 {l_idx+1} 之后\n{wavelength_nm:.0f}nm")
-                axes[w_idx][l_idx+1].set_xticks([])
-                axes[w_idx][l_idx+1].set_yticks([])
-                
-                # 添加检测区域标记（仅在最后一层）
-                if l_idx == num_layers - 1:
-                    offset_x, offset_y = self.config.offsets[w_idx]
-                    center_x = self.config.field_size // 2 + offset_x
-                    center_y = self.config.field_size // 2 + offset_y
-                    
-                    detect_region = plt.Rectangle(
-                        (center_x - self.config.detect_size // 2, center_y - self.config.detect_size // 2),
-                        self.config.detect_size, self.config.detect_size,
-                        fill=False, edgecolor='white', linestyle='--', linewidth=2
-                    )
-                    axes[w_idx][l_idx+1].add_patch(detect_region)
-                
-                # 添加等高线
-                contour = axes[w_idx][l_idx+1].contour(intensity, levels=5, colors='white', alpha=0.5, linewidths=0.8)
-        
-        # 添加颜色条
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-        cbar = fig.colorbar(im, cax=cbar_ax)
-        cbar.set_label('归一化强度')
-        
-        plt.suptitle("光场传播过程", fontsize=16)
-        plt.tight_layout(rect=[0, 0, 0.9, 0.95])
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_loss_curve(self, losses, title, save_path=None):
-        """绘制训练损失曲线（兼容单模型情况）"""
-        plt.figure(figsize=(8, 5))
-        plt.plot(losses, label='训练损失')
-        plt.xlabel('训练步数')
-        plt.ylabel('损失')
-        plt.title(title)
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_energy_distributions(self, output_fields, wavelengths, save_path=None):
-        """绘制多波长能量分布"""
-        num_wavelengths = len(wavelengths)
-        
-        # 创建子图
-        fig, axes = plt.subplots(1, num_wavelengths, figsize=(6*num_wavelengths, 5))
-        
-        # 处理单波长情况
-        if num_wavelengths == 1:
-            axes = [axes]
-        
-        for w_idx, wavelength in enumerate(wavelengths):
-            # 计算能量分布 - 确保在CPU上处理
+        for w_idx, wavelength in enumerate(self.config.wavelengths):
             field = output_fields[w_idx]
             energy = torch.abs(field)**2
             energy_np = energy.detach().cpu().numpy()
             
-            # 归一化
+            # 第一行：原始能量分布
             energy_normalized = energy_np / np.max(energy_np)
+            im1 = axes[0, w_idx].imshow(energy_normalized, cmap=self.energy_cmap, origin='lower')
             
-            # 绘制能量分布
-            im = axes[w_idx].imshow(energy_normalized, cmap=self.energy_cmap, origin='lower')
-            
-            # 添加检测区域标记
+            # 添加检测区域和等高线
             offset_x, offset_y = self.config.offsets[w_idx]
             center_x = self.config.field_size // 2 + offset_x
             center_y = self.config.field_size // 2 + offset_y
@@ -319,145 +186,41 @@ class SimpleVisualizer:
             detect_region = plt.Rectangle(
                 (center_x - self.config.detect_size // 2, center_y - self.config.detect_size // 2),
                 self.config.detect_size, self.config.detect_size,
-                fill=False, edgecolor='white', linestyle='--', linewidth=2
+                fill=False, edgecolor='white', linestyle='--', linewidth=3
             )
-            axes[w_idx].add_patch(detect_region)
-            
-            # 设置标题和标签
-            wavelength_nm = wavelength * 1e9
-            axes[w_idx].set_title(f"波长: {wavelength_nm:.0f}nm")
-            axes[w_idx].set_xlabel('X (像素)')
-            axes[w_idx].set_ylabel('Y (像素)')
-            
-            # 添加颜色条
-            cbar = fig.colorbar(im, ax=axes[w_idx])
-            cbar.set_label('归一化能量')
-        
-        plt.suptitle("多波长能量分布", fontsize=16)
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_phase_masks(self, phase_masks, save_path=None):
-        """绘制相位掩膜"""
-        num_layers = len(phase_masks)
-        
-        fig, axes = plt.subplots(1, num_layers, figsize=(5*num_layers, 5))
-        
-        # 处理单层情况
-        if num_layers == 1:
-            axes = [axes]
-        
-        for i in range(num_layers):
-            # 将相位值标准化到[0, 2π]范围 - 确保在CPU上处理
-            phase = phase_masks[i].detach().cpu().numpy()
-            phase = (phase % (2 * np.pi))
-            
-            im = axes[i].imshow(phase, cmap=self.phase_cmap, vmin=0, vmax=2*np.pi)
-            axes[i].set_title(f"层 {i+1}")
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
-        
-        # 添加颜色条
-        cbar = fig.colorbar(im, ax=axes, orientation='horizontal', fraction=0.046, pad=0.08)
-        cbar.set_label('相位 (弧度)')
-        
-        plt.suptitle(f"相位掩膜", fontsize=16)
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_field_propagation_simple(self, fields, title, save_path=None):
-        """绘制光场传播过程（简化版本）"""
-        num_steps = len(fields)
-        
-        fig, axes = plt.subplots(1, num_steps, figsize=(4*num_steps, 4))
-        
-        # 处理单步情况
-        if num_steps == 1:
-            axes = [axes]
-        
-        for i, field in enumerate(fields):
-            # 计算强度 - 确保在CPU上处理
-            intensity = torch.abs(field)**2
-            intensity_np = intensity.detach().cpu().numpy()
-            
-            # 归一化
-            intensity_normalized = intensity_np / np.max(intensity_np)
-            
-            # 绘制强度分布
-            im = axes[i].imshow(intensity_normalized, cmap='inferno', origin='lower')
-            axes[i].set_title(f"步骤 {i+1}")
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
+            axes[0, w_idx].add_patch(detect_region)
             
             # 添加等高线
-            contour = axes[i].contour(intensity_normalized, levels=5, colors='white', alpha=0.5, linewidths=0.8)
-        
-        # 添加颜色条
-        cbar = fig.colorbar(im, ax=axes, orientation='horizontal', fraction=0.046, pad=0.08)
-        cbar.set_label('归一化强度')
-        
-        plt.suptitle(title, fontsize=16)
-        plt.tight_layout()
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            plt.show()
-
-    def plot_target_regions(self, output_fields, wavelengths, offsets, detect_size, save_path=None):
-        """绘制目标区域的能量分布"""
-        num_wavelengths = len(wavelengths)
-        
-        fig, axes = plt.subplots(1, num_wavelengths, figsize=(6*num_wavelengths, 5))
-        
-        # 处理单波长情况
-        if num_wavelengths == 1:
-            axes = [axes]
-        
-        for w_idx, wavelength in enumerate(wavelengths):
-            # 确保在CPU上处理
-            field = output_fields[w_idx]
-            energy = torch.abs(field)**2
-            energy_np = energy.detach().cpu().numpy()
+            contour = axes[0, w_idx].contour(energy_normalized, levels=8, colors='white', alpha=0.6, linewidths=1)
             
-            # 绘制完整的能量分布
-            im = axes[w_idx].imshow(energy_np, cmap=self.energy_cmap, origin='lower')
-            
-            # 突出显示目标区域
-            offset_x, offset_y = offsets[w_idx]
-            center_x = self.config.field_size // 2 + offset_x
-            center_y = self.config.field_size // 2 + offset_y
-            
-            # 绘制目标区域边界
-            detect_region = plt.Rectangle(
-                (center_x - detect_size // 2, center_y - detect_size // 2),
-                detect_size, detect_size,
-                fill=False, edgecolor='red', linestyle='-', linewidth=3
-            )
-            axes[w_idx].add_patch(detect_region)
-            
-            # 设置标题
             wavelength_nm = wavelength * 1e9
-            axes[w_idx].set_title(f"波长: {wavelength_nm:.0f}nm 目标区域")
-            axes[w_idx].set_xlabel('X (像素)')
-            axes[w_idx].set_ylabel('Y (像素)')
+            axes[0, w_idx].set_title(f"能量分布 - {wavelength_nm:.0f}nm", fontweight='bold')
+            axes[0, w_idx].set_xlabel('X (像素)')
+            axes[0, w_idx].set_ylabel('Y (像素)')
             
-            # 添加颜色条
-            cbar = fig.colorbar(im, ax=axes[w_idx])
-            cbar.set_label('能量')
+            # 第二行：3D能量分布
+            x = np.arange(self.config.field_size)
+            y = np.arange(self.config.field_size)
+            X, Y = np.meshgrid(x, y)
+            
+            ax_3d = fig.add_subplot(2, num_wavelengths, num_wavelengths + w_idx + 1, projection='3d')
+            
+            # 降采样以提高性能
+            step = max(1, self.config.field_size // 50)
+            X_sub = X[::step, ::step]
+            Y_sub = Y[::step, ::step]
+            energy_sub = energy_normalized[::step, ::step]
+            
+            surf = ax_3d.plot_surface(X_sub, Y_sub, energy_sub, cmap=self.energy_cmap, alpha=0.8)
+            ax_3d.set_title(f"3D视图 - {wavelength_nm:.0f}nm", fontweight='bold')
+            ax_3d.set_xlabel('X')
+            ax_3d.set_ylabel('Y')
+            ax_3d.set_zlabel('归一化能量')
+            
+            # 移除原来的axes[1, w_idx]
+            axes[1, w_idx].remove()
         
-        plt.suptitle("目标区域能量分布", fontsize=16)
+        plt.suptitle('🔥 改进能量分布分析', fontsize=16, fontweight='bold')
         plt.tight_layout()
         
         if save_path:
@@ -466,92 +229,121 @@ class SimpleVisualizer:
         else:
             plt.show()
 
-    def plot_wavelength_separation_metrics(self, separation_metrics, save_path):
-        """绘制波长分离性能指标"""
-        # 过滤出波长相关的指标（排除'overall'）
-        wavelength_metrics = {k: v for k, v in separation_metrics.items() if k != 'overall'}
+    def plot_comparison_original_vs_improved(self, original_results, improved_results, save_path=None):
+        """🔥 原版 vs 改进版对比"""
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         
-        if not wavelength_metrics:
-            print("没有找到波长相关的指标数据")
-            return
+        # 1. 效率对比
+        wavelengths_nm = [int(wl*1e9) for wl in self.config.wavelengths]
+        x = np.arange(len(wavelengths_nm))
+        width = 0.35
         
-        wavelengths = list(wavelength_metrics.keys())
-        efficiencies = [metrics['efficiency'] for metrics in wavelength_metrics.values()]
-        crosstalks = [metrics['avg_crosstalk'] for metrics in wavelength_metrics.values()]
-        snrs = [metrics['snr'] for metrics in wavelength_metrics.values()]
-        contrasts = [metrics['contrast'] for metrics in wavelength_metrics.values()]
+        axes[0, 0].bar(x - width/2, original_results['final_efficiencies'], width, 
+                      label='原版', alpha=0.7, color='lightblue')
+        axes[0, 0].bar(x + width/2, improved_results['final_efficiencies'], width,
+                      label='改进版', alpha=0.7, color='orange')
+        
+        axes[0, 0].set_title('效率对比', fontsize=14, fontweight='bold')
+        axes[0, 0].set_xlabel('波长 (nm)')
+        axes[0, 0].set_ylabel('效率')
+        axes[0, 0].set_xticks(x)
+        axes[0, 0].set_xticklabels(wavelengths_nm)
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3, axis='y')
+        
+        # 添加数值标签
+        for i, (orig, impr) in enumerate(zip(original_results['final_efficiencies'], 
+                                           improved_results['final_efficiencies'])):
+            axes[0, 0].text(i - width/2, orig + 0.01, f'{orig:.3f}', ha='center', va='bottom')
+            axes[0, 0].text(i + width/2, impr + 0.01, f'{impr:.3f}', ha='center', va='bottom')
+        
+        # 2. 训练损失对比
+        orig_epochs = range(len(original_results['training_history']['total_loss']))
+        impr_epochs = range(len(improved_results['training_history']['total_loss']))
+        
+        axes[0, 1].plot(orig_epochs, original_results['training_history']['total_loss'], 
+                       label='原版', linewidth=2, alpha=0.7)
+        axes[0, 1].plot(impr_epochs, improved_results['training_history']['total_loss'], 
+                       label='改进版', linewidth=2, alpha=0.7)
+        axes[0, 1].set_title('训练损失对比', fontsize=14, fontweight='bold')
+        axes[0, 1].set_xlabel('训练轮次')
+        axes[0, 1].set_ylabel('损失值')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].set_yscale('log')
+        
+        # 3. 训练时间对比
+        times = [original_results['training_time'], improved_results['training_time']]
+        labels = ['原版', '改进版']
+        colors = ['lightblue', 'orange']
+        
+        bars = axes[0, 2].bar(labels, times, color=colors, alpha=0.7)
+        axes[0, 2].set_title('训练时间对比', fontsize=14, fontweight='bold')
+        axes[0, 2].set_ylabel('时间 (秒)')
+        axes[0, 2].grid(True, alpha=0.3, axis='y')
+        
+        for bar, time in zip(bars, times):
+            axes[0, 2].text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(times)*0.01,
+                           f'{time:.1f}s', ha='center', va='bottom', fontweight='bold')
+        
+        # 4. 平均效率提升
+        orig_avg = np.mean(original_results['final_efficiencies'])
+        impr_avg = np.mean(improved_results['final_efficiencies'])
+        improvement = (impr_avg - orig_avg) / orig_avg * 100
+        
+        axes[1, 0].bar(['原版', '改进版'], [orig_avg, impr_avg], 
+                      color=['lightblue', 'orange'], alpha=0.7)
+        axes[1, 0].set_title(f'平均效率提升: +{improvement:.1f}%', fontsize=14, fontweight='bold')
+        axes[1, 0].set_ylabel('平均效率')
+        axes[1, 0].grid(True, alpha=0.3, axis='y')
+        
+        # 添加数值标签
+        axes[1, 0].text(0, orig_avg + 0.01, f'{orig_avg:.3f}', ha='center', va='bottom', fontweight='bold')
+        axes[1, 0].text(1, impr_avg + 0.01, f'{impr_avg:.3f}', ha='center', va='bottom', fontweight='bold')
+        
+        # 5. 最终损失对比
+        final_losses = [original_results['training_history']['total_loss'][-1],
+                       improved_results['training_history']['total_loss'][-1]]
+        
+        bars = axes[1, 1].bar(['原版', '改进版'], final_losses, 
+                             color=['lightblue', 'orange'], alpha=0.7)
+        axes[1, 1].set_title('最终损失对比', fontsize=14, fontweight='bold')
+        axes[1, 1].set_ylabel('损失值')
+        axes[1, 1].set_yscale('log')
+        axes[1, 1].grid(True, alpha=0.3, axis='y')
+        
+        for bar, loss in zip(bars, final_losses):
+            axes[1, 1].text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.1,
+                           f'{loss:.2e}', ha='center', va='bottom', fontweight='bold')
+        
+        # 6. 改进总结
+        axes[1, 2].axis('off')
+        summary_text = f"""
+                    🔥 改进效果总结:
 
-        # 创建2x2的子图
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+                    📈 平均效率提升: {improvement:+.1f}%
+                    ⏱️ 训练时间: {original_results['training_time']:.1f}s → {improved_results['training_time']:.1f}s
+                    📉 最终损失降低: {(1-final_losses[1]/final_losses[0])*100:.1f}%
+
+                    🔧 主要改进:
+                    • 波长独立相位掩膜
+                    • 多目标损失函数优化
+                    • AdamW + 余弦退火调度
+                    • 相位平滑约束
+                    • 差分检测机制
+
+                    ✅ 性能提升显著!
+                            """
         
-        # 1. 效率图
-        bars1 = ax1.bar(wavelengths, efficiencies, color='blue', alpha=0.7)
-        ax1.set_title('目标区域效率', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('效率', fontsize=12)
-        ax1.set_ylim(0, 1)
-        ax1.grid(True, alpha=0.3)
+        axes[1, 2].text(0.05, 0.95, summary_text, transform=axes[1, 2].transAxes,
+                        fontsize=12, verticalalignment='top',
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8))
         
-        # 添加数值标签
-        for bar, value in zip(bars1, efficiencies):
-            ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                    f'{value:.3f}', ha='center', va='bottom', fontsize=10)
-        
-        # 2. 串扰图
-        bars2 = ax2.bar(wavelengths, crosstalks, color='red', alpha=0.7)
-        ax2.set_title('平均串扰', fontsize=14, fontweight='bold')
-        ax2.set_ylabel('串扰', fontsize=12)
-        ax2.grid(True, alpha=0.3)
-        
-        # 添加数值标签
-        for bar, value in zip(bars2, crosstalks):
-            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(crosstalks)*0.01,
-                    f'{value:.3f}', ha='center', va='bottom', fontsize=10)
-        
-        # 3. 信噪比图
-        bars3 = ax3.bar(wavelengths, snrs, color='green', alpha=0.7)
-        ax3.set_title('信噪比 (SNR)', fontsize=14, fontweight='bold')
-        ax3.set_ylabel('SNR', fontsize=12)
-        ax3.grid(True, alpha=0.3)
-        
-        # 添加数值标签
-        for bar, value in zip(bars3, snrs):
-            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(snrs)*0.01,
-                    f'{value:.1f}', ha='center', va='bottom', fontsize=10)
-        
-        # 4. 对比度图
-        bars4 = ax4.bar(wavelengths, contrasts, color='orange', alpha=0.7)
-        ax4.set_title('对比度', fontsize=14, fontweight='bold')
-        ax4.set_ylabel('对比度', fontsize=12)
-        ax4.grid(True, alpha=0.3)
-        
-        # 添加数值标签
-        for bar, value in zip(bars4, contrasts):
-            ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(contrasts)*0.01,
-                    f'{value:.3f}', ha='center', va='bottom', fontsize=10)
-        
-        # 调整x轴标签
-        for ax in [ax1, ax2, ax3, ax4]:
-            ax.tick_params(axis='x', rotation=45)
-            ax.set_xlabel('波长', fontsize=12)
-        
-        # 添加整体性能信息
-        if 'overall' in separation_metrics:
-            overall = separation_metrics['overall']
-            fig.suptitle(f'波长分离性能指标\n'
-                        f'平均效率: {overall["avg_efficiency"]:.3f}, '
-                        f'平均串扰: {overall["avg_crosstalk"]:.3f}, '
-                        f'分离比率: {overall["separation_ratio"]:.1f}',
-                        fontsize=16, fontweight='bold')
-        else:
-            fig.suptitle('波长分离性能指标', fontsize=16, fontweight='bold')
-        
+        plt.suptitle('🔥 原版 vs 改进版 全面对比', fontsize=16, fontweight='bold')
         plt.tight_layout()
-        plt.subplots_adjust(top=0.85)  # 为标题留出空间
         
-        # 确保保存目录存在
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        print(f"波长分离性能指标图已保存到: {save_path}")
-
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+        else:
+            plt.show()

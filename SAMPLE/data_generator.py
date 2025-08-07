@@ -18,19 +18,190 @@ class SingleModeDualWavelengthDataGenerator:
         self.mmf_mode_data = self.load_or_generate_mmf_modes()
         
     def load_or_generate_mmf_modes(self):
-        """Load MMF mode data or generate if not available"""
-        mmf_file_path = os.path.join(self.config.save_dir, 'mmf_modes.npz')
+        """加载MMF模式数据或生成（如果不可用）- 尺寸适配版本"""
         
-        if os.path.exists(mmf_file_path):
-            print("Loading MMF mode data from file...")
-            data = np.load(mmf_file_path)
-            return {
-                'fundamental_mode': torch.tensor(data['fundamental_mode'], dtype=torch.complex64, device=self.device)
-            }
+        # 1. 首先尝试加载你的特征模式文件
+        mmf_eigenmodes_path = "/home/shiyue/ODNN_MULTIWAVE/SAMPLE/eigenmodes_OM4.npy"
+        
+        if os.path.exists(mmf_eigenmodes_path):
+            print(f"找到特征模式文件，正在加载: {mmf_eigenmodes_path}")
+            try:
+                # 加载.npy文件
+                eigenmodes_data = np.load(mmf_eigenmodes_path)
+                print(f"成功加载特征模式数据，形状: {eigenmodes_data.shape}")
+                
+                # 提取基模（通常是第一个模式）
+                if len(eigenmodes_data.shape) == 3:
+                    fundamental_mode = eigenmodes_data[0]
+                else:
+                    fundamental_mode = eigenmodes_data
+                
+                print(f"原始模式形状: {fundamental_mode.shape}")
+                print(f"目标形状: ({self.config.field_size}, {self.config.field_size})")
+                
+                # 🔧 关键修复：调整尺寸以匹配配置
+                fundamental_mode_resized = self.resize_mode_field(
+                    fundamental_mode, 
+                    target_size=self.config.field_size
+                )
+                
+                # 转换为PyTorch张量
+                fundamental_mode_tensor = torch.tensor(
+                    fundamental_mode_resized, 
+                    dtype=torch.complex64, 
+                    device=self.device
+                )
+                
+                # 归一化
+                mode_power = torch.sum(torch.abs(fundamental_mode_tensor)**2)
+                if mode_power > 1e-10:
+                    fundamental_mode_tensor = fundamental_mode_tensor / torch.sqrt(mode_power)
+                
+                print(f"✅ 成功加载并调整模式尺寸: {fundamental_mode_tensor.shape}")
+                return {
+                    'fundamental_mode': fundamental_mode_tensor,
+                    'source': 'eigenmodes_OM4.npy_resized',
+                    'original_shape': eigenmodes_data.shape,
+                    'resized_shape': fundamental_mode_tensor.shape,
+                    'file_path': mmf_eigenmodes_path
+                }
+                
+            except Exception as e:
+                print(f"❌ 加载特征模式文件失败: {e}")
+                print("将尝试其他加载方式...")
+        
+        # 继续其他加载方式...
+        return self.generate_gaussian_fundamental_mode()
+
+    # 在你的数据生成器中替换resize_mode_field方法
+    def resize_mode_field(self, mode_field, target_size):
+        """正确处理不规则尺寸的模式场调整"""
+        import torch.nn.functional as F
+        
+        original_shape = mode_field.shape
+        print(f"原始模式形状: {original_shape}")
+        
+        # 🔧 处理不规则形状 - 确保是方形
+        if len(original_shape) == 2:
+            if original_shape[0] != original_shape[1]:
+                # 如果不是方形，取最小尺寸创建方形
+                min_size = min(original_shape[0], original_shape[1])
+                print(f"⚠️  检测到非方形数据: {original_shape}")
+                print(f"🔧 裁剪到方形: {min_size}x{min_size}")
+                
+                # 中心裁剪到方形
+                center_y, center_x = original_shape[0]//2, original_shape[1]//2
+                half_size = min_size // 2
+                
+                mode_field = mode_field[
+                    center_y-half_size:center_y+half_size,
+                    center_x-half_size:center_x+half_size
+                ]
+                print(f"裁剪后形状: {mode_field.shape}")
+        
+        current_size = mode_field.shape[0]
+        print(f"当前尺寸: {current_size}x{current_size}")
+        print(f"目标尺寸: {target_size}x{target_size}")
+        
+        if current_size == target_size:
+            print("尺寸已匹配，无需调整")
+            return mode_field
+        
+        # 转换为tensor并调整尺寸
+        if isinstance(mode_field, np.ndarray):
+            mode_tensor = torch.tensor(mode_field, dtype=torch.complex64)
         else:
-            print("MMF data file not found, generating Gaussian fundamental mode")
-            return self.generate_gaussian_fundamental_mode()
-    
+            mode_tensor = mode_field
+        
+        # 添加batch维度 [1, 1, H, W]
+        mode_tensor = mode_tensor.unsqueeze(0).unsqueeze(0)
+        
+        # 分别处理实部和虚部
+        real_part = F.interpolate(
+            mode_tensor.real, 
+            size=(target_size, target_size), 
+            mode='bilinear', 
+            align_corners=False
+        )
+        imag_part = F.interpolate(
+            mode_tensor.imag, 
+            size=(target_size, target_size), 
+            mode='bilinear', 
+            align_corners=False
+        )
+        
+        # 重新组合并移除batch维度
+        resized_tensor = (real_part + 1j * imag_part).squeeze(0).squeeze(0)
+        
+        result = resized_tensor.numpy() if isinstance(mode_field, np.ndarray) else resized_tensor
+        print(f"✅ 调整完成，最终尺寸: {result.shape}")
+        
+        return result
+
+
+    def resize_mode_field_torch(self, mode_field, target_size):
+        """使用PyTorch调整模式场尺寸（替代方案）"""
+        import torch.nn.functional as F
+        
+        # 转换为tensor
+        if isinstance(mode_field, np.ndarray):
+            mode_tensor = torch.tensor(mode_field, dtype=torch.complex64)
+        else:
+            mode_tensor = mode_field
+        
+        # 添加batch和channel维度
+        if len(mode_tensor.shape) == 2:
+            mode_tensor = mode_tensor.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+        
+        # 分别处理实部和虚部
+        real_part = mode_tensor.real
+        imag_part = mode_tensor.imag
+        
+        # 使用双线性插值调整大小
+        real_resized = F.interpolate(real_part, size=(target_size, target_size), 
+                                    mode='bilinear', align_corners=False)
+        imag_resized = F.interpolate(imag_part, size=(target_size, target_size), 
+                                    mode='bilinear', align_corners=False)
+        
+        # 重新组合复数
+        resized_tensor = real_resized + 1j * imag_resized
+        
+        # 移除额外维度
+        resized_tensor = resized_tensor.squeeze(0).squeeze(0)
+        
+        return resized_tensor.numpy() if isinstance(mode_field, np.ndarray) else resized_tensor
+
+
+    def generate_gaussian_fundamental_mode(self):
+        """生成基模的高斯近似"""
+        print("正在生成高斯近似基模...")
+        
+        # 创建坐标网格
+        x = torch.linspace(-self.config.field_size//2, self.config.field_size//2, 
+                        self.config.field_size, device=self.device) * self.config.pixel_size
+        y = torch.linspace(-self.config.field_size//2, self.config.field_size//2, 
+                        self.config.field_size, device=self.device) * self.config.pixel_size
+        X, Y = torch.meshgrid(x, y, indexing='ij')
+        R = torch.sqrt(X**2 + Y**2)
+        
+        # 高斯光束腰（基于MMF参数）
+        w0 = self.core_radius / 2  # 光束腰约为纤芯半径的一半
+        
+        # 生成高斯基模
+        fundamental_mode = torch.exp(-R**2 / w0**2).to(torch.complex64)
+        
+        # 归一化
+        mode_power = torch.sum(torch.abs(fundamental_mode)**2)
+        if mode_power > 1e-10:
+            fundamental_mode = fundamental_mode / torch.sqrt(mode_power)
+        
+        print(f"高斯基模生成完成，光束腰: {w0*1e6:.1f} μm")
+        
+        return {
+            'fundamental_mode': fundamental_mode,
+            'beam_waist': w0
+        }
+   
     def generate_gaussian_fundamental_mode(self):
         """Generate a Gaussian approximation of the fundamental mode"""
         # Create coordinate grid

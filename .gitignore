@@ -1,2 +1,5 @@
 .conda/
 ODNN_WAVE/__pycache__/
+ODNN_WAVE/__pycache__/config.cpython-310.pyc
+ODNN_WAVE/__pycache__/data_generator.cpython-310.pyc
+ODNN_WAVE/__pycache__/trainer.cpython-310.pyc
