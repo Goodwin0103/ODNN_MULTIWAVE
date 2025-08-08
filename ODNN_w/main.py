@@ -9,19 +9,14 @@ sys.path.append(os.path.dirname(current_dir))
 
 import torch
 from config.config import ODNNConfig
+from trainning.trainer import ODNNTrainer  # 不是 trainning
 
-# 修复导入路径 - 注意拼写
-try:
-    from training.trainer import ODNNTrainer  # 不是 trainning
-except ImportError:
-    print("Error: training module not found. Please check directory name.")
-    sys.exit(1)
 
 try:
     from model.odnn_models import WavelengthDependentODNNModel
 except ImportError:
     try:
-        from models.odnn_model import WavelengthDependentODNNModel
+        from model.odnn_models import WavelengthDependentODNNModel
     except ImportError:
         print("Error: model module not found")
         sys.exit(1)
@@ -35,17 +30,8 @@ except ImportError as e:
     print(f"Import error: {e}")
     print("请确保所有模块都已创建")
     sys.exit(1)
+from ODNN_functions import create_evaluation_regions
 
-# 确保能找到ODNN_functions
-try:
-    from ODNN_functions import create_evaluation_regions
-except ImportError:
-    print("Warning: ODNN_functions not found, using local implementation")
-    try:
-        from utils.odnn_functions import create_evaluation_regions
-    except ImportError:
-        print("Error: No ODNN_functions found")
-        sys.exit(1)
 
 def main():
     """主函数"""

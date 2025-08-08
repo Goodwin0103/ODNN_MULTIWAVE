@@ -1,0 +1,49 @@
+{
+  "experiment_info": {
+    "timestamp": "2025-08-08 12:42:21",
+    "device": "cuda:0",
+    "num_modes": 3,
+    "wavelengths_nm": [
+      450.0,
+      550.0,
+      650.0
+    ],
+    "field_size": 50,
+    "layer_size": 200,
+    "num_layers_tested": [
+      1,
+      2,
+      3
+    ]
+  },
+  "training_params": {
+    "epochs": 400,
+    "batch_size": 3,
+    "learning_rate": 1.99,
+    "gamma": 0.99
+  },
+  "optical_params": {
+    "pixel_size_um": 1.0,
+    "z_layers_um": 40.0,
+    "z_prop_um": 300.0,
+    "focus_radius": 5,
+    "detect_size": 15
+  },
+  "results": {
+    "visibility_list": [
+      0.6366873582204183,
+      0.8414416909217834,
+      0.9312572479248047
+    ],
+    "num_layers": [
+      1,
+      2,
+      3
+    ],
+    "final_losses": [
+      0.0015752094332128763,
+      0.0010434031719341874,
+      0.0006363422144204378
+    ]
+  }
+}

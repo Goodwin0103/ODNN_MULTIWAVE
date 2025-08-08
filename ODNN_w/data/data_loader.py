@@ -13,7 +13,7 @@ class ODNNDataLoader:
         self.mmf_data = None
         self.complex_weights = None
         
-    def load_mmf_data(self, file_path='eigenmodes_OM4.npy'):
+    def load_mmf_data(self, file_path='ODNN_w/data/eigenmodes_OM4.npy'):
         """加载多模光纤数据"""
         eigenmodes_OM4 = np.load(file_path)
         mmf_data = eigenmodes_OM4[:, :, 0:self.config.NUM_MODES].transpose(2, 0, 1)

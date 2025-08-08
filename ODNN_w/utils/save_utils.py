@@ -5,33 +5,31 @@ import json
 import numpy as np
 from datetime import datetime
 
-def save_model_checkpoint(model, epoch, loss, num_layers, config, optimizer=None, scheduler=None):
+def save_model_checkpoint(model, epoch, loss, num_layers, config, save_type="checkpoint", optimizer=None, scheduler=None):
     """
     保存模型检查点
     
     Parameters:
     -----------
-    model : torch.nn.Module
-        要保存的模型
-    epoch : int
-        当前epoch
-    loss : float
-        当前损失
-    num_layers : int
-        层数
-    config : ODNNConfig
-        配置对象
-    optimizer : torch.optim.Optimizer, optional
-        优化器
-    scheduler : torch.optim.lr_scheduler, optional
-        学习率调度器
+    save_type : str
+        保存类型: "best", "interval", "final", "checkpoint"
     """
     # 确保保存目录存在
     os.makedirs(config.CHECKPOINT_DIR, exist_ok=True)
     
     # 构建保存路径
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"model_{num_layers}layers_epoch{epoch}_loss{loss:.6f}_{timestamp}.pth"
+    
+    # 根据保存类型确定文件名
+    if save_type == "best":
+        filename = f"best_model_{num_layers}layers.pth"
+    elif save_type == "final":
+        filename = f"final_model_{num_layers}layers_epoch{epoch}.pth"
+    elif save_type == "interval":
+        filename = f"checkpoint_{num_layers}layers_epoch{epoch}_{timestamp}.pth"
+    else:
+        filename = f"model_{num_layers}layers_epoch{epoch}_loss{loss:.6f}_{timestamp}.pth"
+    
     filepath = os.path.join(config.CHECKPOINT_DIR, filename)
     
     # 准备保存的数据
@@ -40,6 +38,7 @@ def save_model_checkpoint(model, epoch, loss, num_layers, config, optimizer=None
         'model_state_dict': model.state_dict(),
         'loss': loss,
         'num_layers': num_layers,
+        'save_type': save_type,
         'config': {
             'FIELD_SIZE': config.FIELD_SIZE,
             'LAYER_SIZE': config.LAYER_SIZE,
@@ -52,66 +51,18 @@ def save_model_checkpoint(model, epoch, loss, num_layers, config, optimizer=None
         'timestamp': timestamp
     }
     
-    # 添加优化器状态
+    # 添加优化器和调度器状态
     if optimizer is not None:
         checkpoint['optimizer_state_dict'] = optimizer.state_dict()
-    
-    # 添加调度器状态
     if scheduler is not None:
         checkpoint['scheduler_state_dict'] = scheduler.state_dict()
     
     # 保存检查点
     torch.save(checkpoint, filepath)
     
-    # 同时保存最佳模型
-    best_filepath = os.path.join(config.CHECKPOINT_DIR, f"best_model_{num_layers}layers.pth")
-    torch.save(checkpoint, best_filepath)
-    
-    print(f"模型已保存到: {filepath}")
+    print(f"模型已保存到: {filepath} (类型: {save_type})")
     return filepath
 
-def load_model_checkpoint(filepath, model, optimizer=None, scheduler=None, device='cuda:0'):
-    """
-    加载模型检查点
-    
-    Parameters:
-    -----------
-    filepath : str
-        检查点文件路径
-    model : torch.nn.Module
-        模型对象
-    optimizer : torch.optim.Optimizer, optional
-        优化器
-    scheduler : torch.optim.lr_scheduler, optional
-        学习率调度器
-    device : str
-        设备
-    
-    Returns:
-    --------
-    dict : 检查点信息
-    """
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"检查点文件不存在: {filepath}")
-    
-    # 加载检查点
-    checkpoint = torch.load(filepath, map_location=device)
-    
-    # 加载模型状态
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
-    # 加载优化器状态
-    if optimizer is not None and 'optimizer_state_dict' in checkpoint:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    
-    # 加载调度器状态
-    if scheduler is not None and 'scheduler_state_dict' in checkpoint:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    
-    print(f"模型已从 {filepath} 加载")
-    print(f"Epoch: {checkpoint['epoch']}, Loss: {checkpoint['loss']:.6f}")
-    
-    return checkpoint
 
 def save_training_results(results, config, num_layers):
     """

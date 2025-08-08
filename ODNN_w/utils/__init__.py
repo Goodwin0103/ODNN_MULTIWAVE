@@ -1,7 +1,6 @@
 # utils/__init__.py
 from .save_utils import (
     save_model_checkpoint,
-    load_model_checkpoint,
     save_training_results,
     save_phase_masks,
     save_predictions,
@@ -27,7 +26,6 @@ except ImportError:
 
 __all__ = [
     'save_model_checkpoint',
-    'load_model_checkpoint', 
     'save_training_results',
     'save_phase_masks',
     'save_predictions',
