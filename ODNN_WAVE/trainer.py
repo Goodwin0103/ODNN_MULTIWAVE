@@ -117,80 +117,112 @@ class Trainer:
         # 合并批次维度
         weights_pred = torch.cat(all_weights_pred, dim=1).numpy()
         
-        # 计算可见度 - 考虑多模式多波长
-        visibility = self._calculate_visibility(weights_pred)
+        # 计算可见度 - 修复为每个波长每个模式的可见度
+        visibility = self._calculate_visibility_fixed(weights_pred)
         
         return {'weights_pred': weights_pred, 'visibility': visibility}
 
-    def _calculate_visibility(self, weights):
-        """返回每个模式的可见度"""
+    def _calculate_visibility_fixed(self, weights):
+        """
+        修复版本：返回每个波长每个模式的可见度
+        返回格式：[wl1_mode1, wl1_mode2, wl1_mode3, wl2_mode1, wl2_mode2, wl2_mode3, wl3_mode1, wl3_mode2, wl3_mode3]
+        """
         if torch.is_tensor(weights):
             weights = weights.cpu().numpy()
         
         num_wavelengths, num_batches, num_regions = weights.shape
         num_modes = self.config.num_modes
-        mode_visibilities = []
         
-        # 假设区域按模式-波长组合排列
-        for mode_idx in range(num_modes):
-            # 计算该模式在所有批次中的平均可见度
-            mode_vis_across_batches = []
+        print(f"计算可见度: {num_wavelengths}波长, {num_batches}批次, {num_regions}区域, {num_modes}模式")
+        
+        # 存储每个波长每个模式的可见度
+        all_visibilities = []
+        
+        # 对每个波长分别计算
+        for wl_idx in range(num_wavelengths):
+            wavelength = self.config.wavelengths[wl_idx]
+            print(f"处理波长 {wavelength*1e9:.0f}nm (索引{wl_idx})")
             
-            for batch_idx in range(num_batches):
-                # 计算该模式在所有区域的能量分布
-                mode_energies = []
+            # 对该波长下的每个模式计算可见度
+            for mode_idx in range(num_modes):
+                print(f"  处理模式 {mode_idx+1}")
                 
-                # 找出该模式对应的区域索引 (对所有波长)
-                for wl_idx in range(num_wavelengths):
-                    # 检查对应当前模式和波长的所有区域能量
-                    region_indices = []
-                    for r in range(num_modes * num_wavelengths):
-                        r_mode = r // num_wavelengths
-                        r_wl = r % num_wavelengths
-                        if r_mode == mode_idx:
-                            region_indices.append(r)
-                    
-                    # 收集区域能量
-                    for region_idx in region_indices:
-                        if region_idx < num_regions:
-                            mode_energies.append(weights[wl_idx, batch_idx, region_idx])
+                # 计算该波长该模式在所有批次中的可见度
+                mode_vis_across_batches = []
                 
-                # 计算该批次该模式的可见度
-                if mode_energies:
-                    I_max = np.max(mode_energies)
-                    I_min = np.min(mode_energies)
+                for batch_idx in range(num_batches):
+                    # 找出该模式对应的区域索引
+                    # 假设区域按 [mode0_wl0, mode1_wl0, mode2_wl0, mode0_wl1, mode1_wl1, mode2_wl1, ...] 排列
+                    # 或者按 [mode0_wl0, mode0_wl1, mode0_wl2, mode1_wl0, mode1_wl1, mode1_wl2, ...] 排列
                     
-                    if I_max + I_min > 1e-12:
-                        visibility = (I_max - I_min) / (I_max + I_min)
+                    # 收集该模式在该波长下的所有相关区域能量
+                    mode_energies = []
+                    
+                    # 方法1：假设区域按模式优先排列 (mode0_all_wl, mode1_all_wl, mode2_all_wl)
+                    regions_per_mode = num_regions // num_modes
+                    start_region = mode_idx * regions_per_mode
+                    end_region = (mode_idx + 1) * regions_per_mode
+                    
+                    # 在该模式的区域范围内，找到对应当前波长的区域
+                    for region_idx in range(start_region, min(end_region, num_regions)):
+                        energy = weights[wl_idx, batch_idx, region_idx]
+                        mode_energies.append(energy)
+                    
+                    # 如果上面的方法不对，尝试方法2：区域按波长优先排列
+                    if not mode_energies or len(mode_energies) < 3:  # 每个模式应该至少有3个检测器
+                        mode_energies = []
+                        # 假设每个波长有 num_modes*3 个区域（每个模式3个检测器）
+                        regions_per_wavelength = num_modes * 3
+                        detector_start = mode_idx * 3
+                        detector_end = detector_start + 3
+                        
+                        for detector_idx in range(detector_start, detector_end):
+                            if detector_idx < num_regions:
+                                energy = weights[wl_idx, batch_idx, detector_idx]
+                                mode_energies.append(energy)
+                    
+                    # 计算该批次该模式的可见度
+                    if len(mode_energies) >= 2:  # 至少需要2个检测器来计算可见度
+                        I_max = np.max(mode_energies)
+                        I_min = np.min(mode_energies)
+                        
+                        if I_max + I_min > 1e-12:
+                            visibility = (I_max - I_min) / (I_max + I_min)
+                        else:
+                            visibility = 0.0
                     else:
                         visibility = 0.0
-                        
+                    
                     mode_vis_across_batches.append(visibility)
-            
-            # 计算该模式所有批次的平均可见度
-            if mode_vis_across_batches:
-                mode_visibilities.append(np.mean(mode_vis_across_batches))
-            else:
-                mode_visibilities.append(0.0)
+                    
+                    if batch_idx == 0:  # 只打印第一个批次的详细信息
+                        print(f"    批次0: 能量={mode_energies}, 可见度={visibility:.6f}")
+                
+                # 计算该波长该模式所有批次的平均可见度
+                if mode_vis_across_batches:
+                    avg_visibility = np.mean(mode_vis_across_batches)
+                    all_visibilities.append(avg_visibility)
+                    print(f"  模式{mode_idx+1}平均可见度: {avg_visibility:.6f}")
+                else:
+                    all_visibilities.append(0.0)
+                    print(f"  模式{mode_idx+1}平均可见度: 0.0 (无有效数据)")
         
-        return mode_visibilities
+        print(f"总共计算了 {len(all_visibilities)} 个可见度值")
+        print(f"期望值: {num_wavelengths * num_modes}")
+        
+        return all_visibilities
 
     def train_multiple_models(self, num_layer_options):
         results = {'models': [], 'losses': [], 'phase_masks': [], 'weights_pred': [], 'visibility': []}
         
-        # 初始化按模式组织的可见度列表
-        visibility_by_mode = []
-        
         for num_layers in num_layer_options:
+            print(f"\n开始训练 {num_layers} 层模型...")
             model_result = self.train_model(num_layers)
             
             # 收集每个层数下的模型结果
             for k in results:
-                if k != 'visibility':
-                    results[k].append(model_result[k])
+                results[k].append(model_result[k])
             
-            # 处理可见度数据 - 假设model_result['visibility']是一个包含每个模式可见度的列表
-            mode_visibilities = model_result['visibility']
-            results['visibility'].append(mode_visibilities)
+            print(f"{num_layers}层模型训练完成，可见度数量: {len(model_result['visibility'])}")
             
         return results
