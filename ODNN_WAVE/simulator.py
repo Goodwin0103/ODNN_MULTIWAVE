@@ -1,5 +1,141 @@
+import torch
+from save_function import save_to_mat_MC
+from light_propagation_simulation_qz import plot_propagated_field, propagation_multi
+import numpy as np
+from label_utils import evaluate_output, evaluate_all_regions
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim.lr_scheduler import ExponentialLR
+import matplotlib.pyplot as plt
+
+class FocusingLoss(nn.Module):
+    """专门用于聚焦的损失函数"""
+    
+    def __init__(self, config, evaluation_regions, focus_weight=10.0, spread_penalty=1.0):
+        super().__init__()
+        self.config = config
+        self.evaluation_regions = evaluation_regions
+        self.focus_weight = focus_weight
+        self.spread_penalty = spread_penalty
+        self.mse_loss = nn.MSELoss()
+        
+    def forward(self, predictions, targets):
+        """
+        计算聚焦损失
+        
+        参数:
+            predictions: 模型预测 [batch, wavelength, height, width]
+            targets: 目标标签 [batch, wavelength, height, width]
+        """
+        # 基础MSE损失
+        base_loss = self.mse_loss(predictions, targets)
+        
+        # 聚焦损失：鼓励能量集中在目标区域
+        focus_loss = 0.0
+        spread_loss = 0.0
+        
+        batch_size = predictions.shape[0]
+        
+        for b in range(batch_size):
+            for wl_idx in range(predictions.shape[1]):
+                pred_intensity = predictions[b, wl_idx]
+                target_intensity = targets[b, wl_idx]
+                
+                # 计算目标区域的能量集中度
+                target_center = self._find_energy_center(target_intensity)
+                if target_center is not None:
+                    # 聚焦损失：鼓励预测在目标中心附近有高能量
+                    focus_mask = self._create_focus_mask(
+                        pred_intensity.shape, target_center, radius=self.config.focus_radius
+                    )
+                    focus_energy = (pred_intensity * focus_mask).sum()
+                    total_energy = pred_intensity.sum()
+                    
+                    if total_energy > 1e-8:
+                        focus_ratio = focus_energy / total_energy
+                        focus_loss += (1.0 - focus_ratio) ** 2
+                    
+                    # 散射惩罚：惩罚能量过度分散
+                    spread_loss += self._calculate_spread_penalty(pred_intensity, target_center)
+        
+        total_loss = base_loss + self.focus_weight * focus_loss + self.spread_penalty * spread_loss
+        
+        return total_loss
+    
+    def _find_energy_center(self, intensity):
+        """找到能量中心"""
+        if intensity.sum() < 1e-8:
+            return None
+        
+        # 计算质心
+        h, w = intensity.shape
+        y_coords, x_coords = torch.meshgrid(
+            torch.arange(h, device=intensity.device),
+            torch.arange(w, device=intensity.device),
+            indexing='ij'
+        )
+        
+        total_intensity = intensity.sum()
+        center_y = (intensity * y_coords).sum() / total_intensity
+        center_x = (intensity * x_coords).sum() / total_intensity
+        
+        return (center_y.item(), center_x.item())
+    
+    def _create_focus_mask(self, shape, center, radius):
+        """创建聚焦掩膜"""
+        h, w = shape
+        y_coords, x_coords = torch.meshgrid(
+            torch.arange(h),
+            torch.arange(w),
+            indexing='ij'
+        )
+        
+        center_y, center_x = center
+        distance = torch.sqrt((y_coords - center_y)**2 + (x_coords - center_x)**2)
+        mask = (distance <= radius).float()
+        
+        return mask.to(next(iter(predictions.parameters())).device if hasattr(predictions, 'parameters') else 'cpu')
+    
+    def _calculate_spread_penalty(self, intensity, center):
+        """计算散射惩罚"""
+        h, w = intensity.shape
+        y_coords, x_coords = torch.meshgrid(
+            torch.arange(h, device=intensity.device),
+            torch.arange(w, device=intensity.device),
+            indexing='ij'
+        )
+        
+        center_y, center_x = center
+        distance_sq = (y_coords - center_y)**2 + (x_coords - center_x)**2
+        
+        # 加权距离平方和作为散射惩罚
+        spread = (intensity * distance_sq).sum()
+        total_intensity = intensity.sum()
+        
+        if total_intensity > 1e-8:
+            return spread / total_intensity
+        else:
+            return torch.tensor(0.0, device=intensity.device)
+
+def create_focusing_initial_mask(layer_size, wavelength, focal_length, pixel_size):
+    """创建初始聚焦相位掩膜"""
+    center = layer_size // 2
+    y, x = np.ogrid[:layer_size, :layer_size]
+    
+    # 计算到中心的距离
+    r_squared = ((x - center) * pixel_size) ** 2 + ((y - center) * pixel_size) ** 2
+    
+    # 计算聚焦相位
+    k = 2 * np.pi / wavelength
+    phase = -k * r_squared / (2 * focal_length)
+    
+    # 限制相位范围
+    phase = phase % (2 * np.pi)
+    
+    return phase
+
 class Simulator:
-    """完整的仿真器类"""
+    """仿真器类"""
 
     def __init__(self, config, evaluation_regions=None):
         self.config = config
@@ -8,8 +144,6 @@ class Simulator:
         self.evaluation_regions = evaluation_regions
         self.propagated_field = None
         self.focusing_loss = FocusingLoss(config, evaluation_regions) if evaluation_regions else None
-        self.simulation_results = {}  # 存储仿真结果
-        self.focusing_metrics = {}    # 存储聚焦指标
 
     def _preprocess_field_for_simulation(self, field: torch.Tensor) -> torch.Tensor:
         """预处理场以适应仿真"""
@@ -79,6 +213,44 @@ class Simulator:
         else:
             # 单模式处理
             self._simulate_single_mode(phase_masks, input_field)
+            
+    def evaluate_simulation_result(self, field, mode_idx=None, wavelength_idx=None):
+        """
+        评估模拟结果在所有区域的能量分布
+        
+        参数:
+            field: 传播后的场
+            mode_idx: 输入模式索引 (可选)
+            wavelength_idx: 波长索引 (可选)
+        
+        返回:
+            各区域能量列表和最大能量区域索引
+        """
+        if self.evaluation_regions is None:
+            print("警告: 未设置评估区域")
+            return None, None
+        
+        # 计算场强度
+        intensity = np.abs(field)**2
+        
+        # 计算所有区域的能量
+        all_energies = evaluate_all_regions(intensity, self.evaluation_regions)
+        
+        # 找到能量最大的区域
+        max_energy_idx = np.argmax(all_energies)
+        
+        # 计算预期索引和实际索引
+        if mode_idx is not None and wavelength_idx is not None:
+            num_wavelengths = len(self.config.wavelengths)
+            expected_idx = mode_idx * num_wavelengths + wavelength_idx
+            predicted_mode = max_energy_idx // num_wavelengths
+            predicted_wl = max_energy_idx % num_wavelengths
+            
+            print(f"模式{mode_idx}波长{wavelength_idx}: "
+                  f"最大能量在区域{max_energy_idx} (模式{predicted_mode},波长{predicted_wl}), "
+                  f"正确: {max_energy_idx == expected_idx}")
+        
+        return all_energies, max_energy_idx
 
     def _simulate_single_mode(self, phase_masks, input_field, mode_suffix=""):
         """
@@ -114,11 +286,6 @@ class Simulator:
         # 现在 input_field 应该是 [wavelength, height, width] 格式
         input_field_padded = self._preprocess_field_for_simulation(input_field)
         propagated = []
-        
-        # 初始化结果存储
-        mode_key = f"mode{mode_suffix}" if mode_suffix else "single_mode"
-        self.simulation_results[mode_key] = {}
-        self.focusing_metrics[mode_key] = {}
 
         for lam_idx, lam in enumerate(self.config.wavelengths):
             print(f'  λ = {lam*1e9:.0f} nm')
@@ -198,15 +365,7 @@ class Simulator:
             print('  → 结束\n')
 
             # 评估聚焦质量
-            focus_quality = self._evaluate_focusing_quality(Ef, lam_idx, mode_suffix)
-            
-            # 存储结果
-            wavelength_key = f"wavelength_{lam*1e9:.0f}nm"
-            self.simulation_results[mode_key][wavelength_key] = {
-                'final_field': Ef.clone(),
-                'layer_propagated': layer_propagated,
-                'focus_quality': focus_quality
-            }
+            self._evaluate_focusing_quality(Ef, lam_idx, mode_suffix)
 
             if self.config.flag_savemat:
                 try:
@@ -260,44 +419,6 @@ class Simulator:
                         wavelength_idx=lam_idx
                     )
 
-    def evaluate_simulation_result(self, field, mode_idx=None, wavelength_idx=None):
-        """
-        评估模拟结果在所有区域的能量分布
-        
-        参数:
-            field: 传播后的场
-            mode_idx: 输入模式索引 (可选)
-            wavelength_idx: 波长索引 (可选)
-        
-        返回:
-            各区域能量列表和最大能量区域索引
-        """
-        if self.evaluation_regions is None:
-            print("警告: 未设置评估区域")
-            return None, None
-        
-        # 计算场强度
-        intensity = np.abs(field)**2
-        
-        # 计算所有区域的能量
-        all_energies = evaluate_all_regions(intensity, self.evaluation_regions)
-        
-        # 找到能量最大的区域
-        max_energy_idx = np.argmax(all_energies)
-        
-        # 计算预期索引和实际索引
-        if mode_idx is not None and wavelength_idx is not None:
-            num_wavelengths = len(self.config.wavelengths)
-            expected_idx = mode_idx * num_wavelengths + wavelength_idx
-            predicted_mode = max_energy_idx // num_wavelengths
-            predicted_wl = max_energy_idx % num_wavelengths
-            
-            print(f"模式{mode_idx}波长{wavelength_idx}: "
-                  f"最大能量在区域{max_energy_idx} (模式{predicted_mode},波长{predicted_wl}), "
-                  f"正确: {max_energy_idx == expected_idx}")
-        
-        return all_energies, max_energy_idx
-
     def _evaluate_focusing_quality(self, field, wavelength_idx, mode_suffix):
         """评估聚焦质量"""
         # 转换为numpy数组
@@ -333,40 +454,11 @@ class Simulator:
             # 计算峰值强度位置
             max_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
             
-            # 计算半高全宽 (FWHM)
-            max_intensity = intensity.max()
-            half_max = max_intensity / 2
-            fwhm_mask = intensity >= half_max
-            fwhm_area = np.sum(fwhm_mask)
-            fwhm_radius = np.sqrt(fwhm_area / np.pi) * self.config.pixel_size
-            
-            # 计算聚焦效率
-            theoretical_diffraction_limit = 1.22 * self.config.wavelengths[wavelength_idx] / (2 * 0.5)  # 假设NA=0.5
-            focusing_efficiency = theoretical_diffraction_limit / (fwhm_radius * 2) if fwhm_radius > 0 else 0
-            
             print(f"  聚焦质量{mode_suffix}:")
             print(f"    质心位置: ({center_y:.1f}, {center_x:.1f})")
             print(f"    峰值位置: {max_pos}")
             print(f"    聚焦比例: {focus_ratio:.4f}")
             print(f"    峰值强度: {intensity.max():.6f}")
-            print(f"    FWHM半径: {fwhm_radius*1e6:.2f} μm")
-            print(f"    聚焦效率: {focusing_efficiency:.4f}")
-            
-            # 存储聚焦指标
-            mode_key = f"mode{mode_suffix}" if mode_suffix else "single_mode"
-            wavelength_key = f"wavelength_{self.config.wavelengths[wavelength_idx]*1e9:.0f}nm"
-            
-            if mode_key not in self.focusing_metrics:
-                self.focusing_metrics[mode_key] = {}
-            
-            self.focusing_metrics[mode_key][wavelength_key] = {
-                'focus_ratio': focus_ratio,
-                'peak_intensity': intensity.max(),
-                'centroid': (center_y, center_x),
-                'peak_position': max_pos,
-                'fwhm_radius': fwhm_radius,
-                'focusing_efficiency': focusing_efficiency
-            }
             
             return focus_ratio
         else:
@@ -422,128 +514,46 @@ class Simulator:
             
         return mode_specific_masks
 
-    def optimize_masks_for_focusing(self, initial_masks, target_positions=None, iterations=100):
+    def _check_and_adjust_masks(self, masks, mode_idx=None):
         """
-        使用梯度下降优化相位掩膜以改善聚焦性能
+        检查并调整掩膜结构，确保格式正确
         
         参数:
-            initial_masks: 初始相位掩膜
-            target_positions: 目标聚焦位置列表
-            iterations: 优化迭代次数
+            masks: 相位掩膜
+            mode_idx: 模式索引（用于调试信息）
         
         返回:
-            优化后的相位掩膜
+            调整后的掩膜
         """
-        print("开始相位掩膜聚焦优化...")
+        mode_info = f"模式 {mode_idx+1}" if mode_idx is not None else "通用"
+        print(f"检查{mode_info}掩膜结构...")
         
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not isinstance(masks, list):
+            print(f"  {mode_info}掩膜不是列表，转换为列表")
+            return [[masks]]
         
-        # 将掩膜转换为可训练参数
-        optimizable_masks = []
-        for layer_masks in initial_masks:
-            layer_params = []
-            for mask in layer_masks:
-                if isinstance(mask, np.ndarray):
-                    mask_tensor = torch.from_numpy(mask).float().to(device)
+        if len(masks) == 0:
+            print(f"  {mode_info}掩膜列表为空")
+            return masks
+        
+        # 检查第一层
+        if not isinstance(masks[0], list):
+            print(f"  {mode_info}掩膜第一层不是列表，转换为[层数][波长数]格式")
+            return [[m] for m in masks]
+        
+        # 检查是否有额外的模式维度
+        if len(masks[0]) > 0 and isinstance(masks[0][0], list):
+            print(f"  {mode_info}掩膜存在额外的模式维度，调整结构")
+            adjusted_masks = []
+            for layer_idx, layer_masks in enumerate(masks):
+                if isinstance(layer_masks[0], list):
+                    # 只取第一个模式的掩膜
+                    adjusted_masks.append(layer_masks[0])
                 else:
-                    mask_tensor = mask.float().to(device)
-                mask_tensor.requires_grad_(True)
-                layer_params.append(mask_tensor)
-            optimizable_masks.append(layer_params)
+                    adjusted_masks.append(layer_masks)
+            return adjusted_masks
         
-        # 设置优化器
-        all_params = []
-        for layer_params in optimizable_masks:
-            all_params.extend(layer_params)
-        
-        optimizer = torch.optim.Adam(all_params, lr=0.01)
-        
-        # 优化循环
-        for iteration in range(iterations):
-            optimizer.zero_grad()
-            
-            # 计算聚焦损失
-            total_loss = 0.0
-            
-            for wl_idx, wavelength in enumerate(self.config.wavelengths):
-                # 创建测试输入场
-                test_field = torch.ones((1, 1, self.config.layer_size, self.config.layer_size), 
-                                      dtype=torch.complex64, device=device)
-                
-                # 通过网络传播
-                current_field = test_field
-                for layer_idx, layer_params in enumerate(optimizable_masks):
-                    # 应用相位掩膜
-                    phase_mask = layer_params[wl_idx]
-                    current_field = current_field * torch.exp(1j * phase_mask.unsqueeze(0).unsqueeze(0))
-                    
-                    # 传播到下一层
-                    if layer_idx < len(optimizable_masks) - 1:
-                        current_field = propagation_multi(
-                            current_field, z=self.config.z_layers,
-                            wavelengths=[wavelength],
-                            pixel_size=self.config.pixel_size,
-                            device=device
-                        )
-                
-                # 最终传播
-                final_field = propagation_multi(
-                    current_field, z=self.config.z_prop,
-                    wavelengths=[wavelength],
-                    pixel_size=self.config.pixel_size,
-                    device=device
-                )
-                
-                # 计算聚焦损失
-                intensity = torch.abs(final_field)**2
-                
-                # 计算质心
-                h, w = intensity.shape[-2:]
-                y_coords, x_coords = torch.meshgrid(
-                    torch.arange(h, device=device, dtype=torch.float32),
-                    torch.arange(w, device=device, dtype=torch.float32),
-                    indexing='ij'
-                )
-                
-                total_intensity = intensity.sum()
-                if total_intensity > 1e-8:
-                    center_y = (intensity.squeeze() * y_coords).sum() / total_intensity
-                    center_x = (intensity.squeeze() * x_coords).sum() / total_intensity
-                    
-                    # 目标位置（图像中心）
-                    target_y = h // 2
-                    target_x = w // 2
-                    
-                    # 位置损失
-                    position_loss = (center_y - target_y)**2 + (center_x - target_x)**2
-                    
-                    # 聚焦损失（鼓励能量集中）
-                    focus_radius = self.config.focus_radius / self.config.pixel_size
-                    distances = torch.sqrt((y_coords - target_y)**2 + (x_coords - target_x)**2)
-                    focus_mask = (distances <= focus_radius).float()
-                    
-                    focus_energy = (intensity.squeeze() * focus_mask).sum()
-                    focus_loss = 1.0 - (focus_energy / total_intensity)
-                    
-                    total_loss += position_loss + 10.0 * focus_loss
-            
-            # 反向传播
-            total_loss.backward()
-            optimizer.step()
-            
-            if iteration % 20 == 0:
-                print(f"优化迭代 {iteration}/{iterations}, 损失: {total_loss.item():.6f}")
-        
-        # 转换回numpy格式
-        optimized_masks = []
-        for layer_params in optimizable_masks:
-            layer_masks = []
-            for mask_tensor in layer_params:
-                layer_masks.append(mask_tensor.detach().cpu().numpy())
-            optimized_masks.append(layer_masks)
-        
-        print("相位掩膜优化完成")
-        return optimized_masks
+        return masks
 
     def diagnose_focusing_issues(self, phase_masks):
         """诊断聚焦问题"""
@@ -570,16 +580,5 @@ class Simulator:
         
         if fresnel_number < 1:
             print("⚠️  菲涅尔数过小，可能需要增加层尺寸或减少传播距离")
-        
-        # 4. 建议
-        print("\n=== 建议 ===")
-        phase_range = 0
-        for layer_masks in phase_masks:
-            for mask in layer_masks:
-                if isinstance(mask, np.ndarray):
-                    phase_range = max(phase_range, mask.max() - mask.min())
-        
-        if phase_range < np.pi:
-            print("- 相位范围较小，考虑增加相位调制深度")
-        if total_distance > 10 * rayleigh_length:
-            
+        else:
+            print("✅  菲涅尔数合理，采样足够")

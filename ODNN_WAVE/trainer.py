@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ExponentialLR
 import numpy as np
+import os
 from label_utils import create_evaluation_regions_mode_wavelength, evaluate_output, evaluate_all_regions
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -32,6 +33,10 @@ class Trainer:
         model = self.model_class(self.config, num_layers).to(device)
         losses = self._train_loop(model, train_loader)
         evaluation_results = self._evaluate_model(model, train_loader)
+        
+        # 保存训练结果
+        self._save_training_results(model, losses, num_layers)
+        
         return {
             'models': model,
             'losses': losses,
@@ -40,16 +45,53 @@ class Trainer:
             'visibility': evaluation_results['visibility']
         }
 
+    def _save_training_results(self, model, losses, num_layers):
+        """保存训练结果"""
+        # 创建保存目录
+        save_dir = os.path.join(self.config.save_dir, "trained_models")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # 保存完整模型
+        model_path = os.path.join(save_dir, f"trained_model_{num_layers}layers.pth")
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'model_config': {
+                'num_layers': num_layers,
+                'model_class': self.model_class.__name__
+            },
+            'train_losses': losses,
+            'config': self.config.__dict__ if hasattr(self.config, '__dict__') else {}
+        }, model_path)
+        print(f"✓ 完整模型已保存到: {model_path}")
+        
+        # 保存相位掩码（用于仿真）
+        masks_path = os.path.join(save_dir, f"trained_phase_masks_{num_layers}layers.npz")
+        model.save_trained_masks(masks_path)
+        
+        # 保存训练损失曲线
+        loss_path = os.path.join(save_dir, f"training_losses_{num_layers}layers.npy")
+        np.save(loss_path, losses)
+        print(f"✓ 训练损失已保存到: {loss_path}")
+        
+        # 保存相位掩码可视化
+        vis_dir = os.path.join(save_dir, f"phase_mask_visualization_{num_layers}layers")
+        model.print_phase_masks(save_path=vis_dir)
+        
+        return model_path, masks_path
+
     def _train_loop(self, model, train_loader):
         criterion = nn.MSELoss()
         optimizer = optim.Adam(model.parameters(), lr=self.config.learning_rate)
         scheduler = ExponentialLR(optimizer, gamma=self.config.lr_decay)
         losses = []
         
+        print(f"开始训练 - 设备: {device}")
+        print(f"训练参数: epochs={self.config.epochs}, lr={self.config.learning_rate}")
+        
         for epoch in range(self.config.epochs):
             model.train()
             epoch_loss = 0
-            for images, labels in train_loader:
+            for batch_idx, (images, labels) in enumerate(train_loader):
                 images = images.to(device, dtype=torch.complex64)
                 labels = labels.to(device)  # 保持标签原样
                 
@@ -66,23 +108,30 @@ class Trainer:
             scheduler.step()
             avg_loss = epoch_loss / len(train_loader)
             losses.append(avg_loss)
+            
             if epoch % 100 == 0:
                 print(f'Epoch [{epoch}/{self.config.epochs}], Loss: {avg_loss:.18f}')
         
+        print("✓ 训练完成!")
         return losses
 
     def _extract_phase_masks(self, model):
-        phase_masks = []
-        for layer in model.layers:
-            # 获取单个相位掩膜
-            phase = layer.phase.detach().cpu().numpy()
-            phase = phase % (2 * np.pi)
-            
-            wavelength_masks = []
-            for _ in range(len(self.config.wavelengths)):
-                wavelength_masks.append(phase)
-            phase_masks.append(wavelength_masks)
-        return phase_masks
+        """提取相位掩码用于返回"""
+        if hasattr(model, 'get_phase_masks_for_simulation'):
+            return model.get_phase_masks_for_simulation()
+        else:
+            # 兼容旧版本
+            phase_masks = []
+            for layer in model.layers:
+                # 获取单个相位掩膜
+                phase = layer.phase.detach().cpu().numpy()
+                phase = phase % (2 * np.pi)
+                
+                wavelength_masks = []
+                for _ in range(len(self.config.wavelengths)):
+                    wavelength_masks.append(phase)
+                phase_masks.append(wavelength_masks)
+            return phase_masks
 
     def _evaluate_model(self, model, test_loader):
         model.eval()
@@ -216,13 +265,42 @@ class Trainer:
         results = {'models': [], 'losses': [], 'phase_masks': [], 'weights_pred': [], 'visibility': []}
         
         for num_layers in num_layer_options:
-            print(f"\n开始训练 {num_layers} 层模型...")
+            print(f"\n{'='*50}")
+            print(f"开始训练 {num_layers} 层模型...")
+            print(f"{'='*50}")
+            
             model_result = self.train_model(num_layers)
             
             # 收集每个层数下的模型结果
             for k in results:
                 results[k].append(model_result[k])
             
-            print(f"{num_layers}层模型训练完成，可见度数量: {len(model_result['visibility'])}")
+            print(f"✓ {num_layers}层模型训练完成，可见度数量: {len(model_result['visibility'])}")
             
         return results
+
+    @staticmethod
+    def load_trained_model(model_path, model_class, config):
+        """加载训练好的完整模型"""
+        try:
+            checkpoint = torch.load(model_path, map_location=device)
+            
+            # 获取模型配置
+            model_config = checkpoint.get('model_config', {})
+            num_layers = model_config.get('num_layers', 3)
+            
+            # 创建模型实例
+            model = model_class(config, num_layers).to(device)
+            
+            # 加载模型参数
+            model.load_state_dict(checkpoint['model_state_dict'])
+            
+            print(f"✓ 成功加载训练好的模型: {model_path}")
+            print(f"  模型类型: {model_config.get('model_class', 'Unknown')}")
+            print(f"  层数: {num_layers}")
+            
+            return model, checkpoint.get('train_losses', [])
+            
+        except Exception as e:
+            print(f"✗ 加载模型失败: {e}")
+            return None, None
