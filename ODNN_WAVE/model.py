@@ -19,8 +19,8 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         # 基础相位掩膜
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
-        # 设置基准波长索引（通常选择中间波长）
-        self.base_wavelength_idx = len(wavelengths) // 2
+        # 设置基准波长索引 选择最大波长
+        self.base_wavelength_idx = len(wavelengths) - 1
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)
@@ -295,7 +295,7 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
         # 设置基准波长索引
-        self.base_wavelength_idx = len(wavelengths) // 2
+        self.base_wavelength_idx = np.argmax(wavelengths)
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)
