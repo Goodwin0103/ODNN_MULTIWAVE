@@ -1,6 +1,7 @@
 # config.py
 import numpy as np
 import os
+import torch
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
@@ -11,6 +12,10 @@ def default_wavelengths():
 def default_offsets():
     """默认偏移列表工厂函数"""
     return [(0,0), (20,0), (-20,0)]
+
+def default_device():
+    """默认设备工厂函数"""
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 @dataclass
 class Config:
@@ -43,6 +48,9 @@ class Config:
     save_dir: str = "./results_multi_mode_multi_wl/"  # 保存目录
     flag_savemat: bool = True                         # 是否保存.mat文件
     
+    # *** 新增：设备配置 ***
+    device: torch.device = field(default_factory=default_device)  # 计算设备
+    
     def __post_init__(self):
         # 确保offsets数量与波长数量一致
         if len(self.offsets) != len(self.wavelengths):
@@ -59,3 +67,11 @@ class Config:
         
         # 创建保存目录
         os.makedirs(self.save_dir, exist_ok=True)
+        
+        # *** 新增：打印设备信息 ***
+        print(f"配置完成，使用设备: {self.device}")
+        
+        # *** 新增：验证设备可用性 ***
+        if self.device.type == 'cuda' and not torch.cuda.is_available():
+            print("⚠ CUDA不可用，自动切换到CPU")
+            self.device = torch.device('cpu')

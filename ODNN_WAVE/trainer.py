@@ -4,6 +4,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import ExponentialLR
 import numpy as np
 import os
+from simulator import Simulator
 from label_utils import create_evaluation_regions_mode_wavelength, evaluate_output, evaluate_all_regions
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -304,3 +305,73 @@ class Trainer:
         except Exception as e:
             print(f"✗ 加载模型失败: {e}")
             return None, None
+
+    def evaluate_model_with_cross_matrix(self, model, test_inputs, layer_count):
+        """
+        使用交叉矩阵和SNR评估模型
+        """
+        model.eval()
+        with torch.no_grad():
+            # 获取相位掩膜
+            phase_masks = []
+            for layer in model.layers:
+                if hasattr(layer, 'phase_mask'):
+                    phase_masks.append(layer.phase_mask.detach())
+            
+            # 创建模拟器
+            simulator = Simulator(
+                self.config.H, self.config.W, self.config.dx,
+                self.config.wavelengths, self.config.propagation_distance,
+                phase_masks, self.config.target_positions
+            )
+            
+            # 运行模拟
+            outputs = []
+            for mode_idx in range(self.config.num_modes):
+                mode_input = test_inputs[mode_idx:mode_idx+1]  # [1, num_wl, H, W]
+                mode_output = simulator(mode_input)  # [1, num_wl, H, W]
+                outputs.append(mode_output[0])  # [num_wl, H, W]
+            
+            outputs = torch.stack(outputs)  # [num_modes, num_wl, H, W]
+            
+            # 计算交叉矩阵和SNR
+            cross_matrix, snr_matrix, focus_metrics = calculate_cross_matrix_and_snr(
+                outputs, self.config.target_positions, radius=self.config.focus_radius
+            )
+            
+            # 打印分析结果
+            separation_quality, avg_snrs = print_cross_matrix_analysis(
+                cross_matrix, snr_matrix, focus_metrics, self.config.wavelengths
+            )
+            
+            return {
+                'cross_matrix': cross_matrix,
+                'snr_matrix': snr_matrix,
+                'focus_metrics': focus_metrics,
+                'separation_quality': separation_quality,
+                'avg_snrs': avg_snrs,
+                'outputs': outputs
+            }
+
+    def train_single_configuration(self, num_layers):
+        """
+        修改后的训练函数，使用新的评估方法
+        """
+        # ... 原有的训练代码 ...
+        
+        # 训练完成后的评估
+        print(f"\n🔍 评估 {num_layers} 层模型...")
+        evaluation_results = self.evaluate_model_with_cross_matrix(model, test_inputs, num_layers)
+        
+        # 保存结果
+        results = {
+            'num_layers': num_layers,
+            'cross_matrix': evaluation_results['cross_matrix'],
+            'snr_matrix': evaluation_results['snr_matrix'],
+            'separation_quality': evaluation_results['separation_quality'],
+            'avg_snrs': evaluation_results['avg_snrs'],
+            'focus_metrics': evaluation_results['focus_metrics']
+        }
+        
+        return model, results
+

@@ -347,6 +347,88 @@ class MultiModeMultiWavelengthDataGenerator:
         plt.axis('off')
         plt.savefig('combined_labels.png')
         plt.show()
+    def generate_input_fields_for_simulation(self):
+        """
+        为仿真生成多模式多波长输入场
+        
+        返回:
+            torch.Tensor: [num_modes, num_wavelengths, H, W] 的输入场
+        """
+        print(f"生成 {self.config.num_modes} 个模式，{len(self.config.wavelengths)} 个波长的输入场...")
+        
+        # 创建输入场数组
+        input_fields = torch.zeros(
+            self.config.num_modes, 
+            len(self.config.wavelengths), 
+            self.config.field_size, 
+            self.config.field_size, 
+            dtype=torch.complex64
+        )
+        
+        # 为每个模式生成不同的输入场
+        for mode_idx in range(self.config.num_modes):
+            print(f"  生成模式 {mode_idx + 1}...")
+            
+            # 为每个波长生成场
+            for wl_idx, wavelength in enumerate(self.config.wavelengths):
+                # 生成高斯光束，每个模式有不同的参数
+                field = self._generate_gaussian_beam(
+                    mode_idx=mode_idx,
+                    wavelength=wavelength,
+                    size=self.config.field_size
+                )
+                
+                input_fields[mode_idx, wl_idx] = field
+                
+                wl_nm = wavelength * 1e9
+                print(f"    {wl_nm:.0f}nm: 最大强度 = {torch.max(torch.abs(field)**2):.6f}")
+        
+        print(f"✓ 输入场生成完成，形状: {input_fields.shape}")
+        return input_fields
+
+    def _generate_gaussian_beam(self, mode_idx, wavelength, size):
+        """
+        生成高斯光束，每个模式有不同的参数
+        
+        参数:
+            mode_idx: 模式索引
+            wavelength: 波长
+            size: 场大小
+        
+        返回:
+            torch.Tensor: 高斯光束场
+        """
+        # 创建坐标网格
+        x = torch.linspace(-size//2, size//2-1, size, dtype=torch.float32) * self.config.pixel_size
+        y = torch.linspace(-size//2, size//2-1, size, dtype=torch.float32) * self.config.pixel_size
+        X, Y = torch.meshgrid(x, y, indexing='xy')
+        R_squared = X**2 + Y**2
+        
+        # 每个模式使用不同的束腰和偏移
+        beam_waists = [20e-6, 25e-6, 30e-6]  # 不同的束腰
+        x_offsets = [0, 5e-6, -5e-6]         # 不同的x偏移
+        y_offsets = [0, -3e-6, 3e-6]         # 不同的y偏移
+        
+        w0 = beam_waists[mode_idx % len(beam_waists)]
+        x_offset = x_offsets[mode_idx % len(x_offsets)]
+        y_offset = y_offsets[mode_idx % len(y_offsets)]
+        
+        # 调整坐标
+        X_adj = X - x_offset
+        Y_adj = Y - y_offset
+        R_adj_squared = X_adj**2 + Y_adj**2
+        
+        # 生成高斯光束
+        amplitude = torch.exp(-R_adj_squared / w0**2)
+        
+        # 添加不同的相位（可选）
+        phase_offset = mode_idx * np.pi / 3
+        phase = torch.full_like(amplitude, phase_offset)
+        
+        # 组合成复数场
+        field = amplitude * torch.exp(1j * phase)
+        
+        return field.to(torch.complex64)
 
 def generate_fields_ts(complex_weights, MMF_data, num_data, num_modes, image_size,
                        wavelength=None, z0=40e-6, dx=1e-6, device='cpu'):

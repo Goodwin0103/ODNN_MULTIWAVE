@@ -277,8 +277,8 @@ class WavelengthDependentD2NNModel(nn.Module):
                 os.makedirs(save_path, exist_ok=True)
                 plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
                 print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
-            else:
-                plt.show()
+            # else:
+            #     plt.show()
 
 class PhysicsBasedMultiWavelengthLayer(nn.Module):
     def __init__(self, units, pixel_size, wavelengths, z_distance, num_modes, layer_idx=0):
@@ -521,5 +521,5 @@ class MultiModeMultiWavelengthModel(nn.Module):
                 os.makedirs(save_path, exist_ok=True)
                 plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
                 print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
-            else:
-                plt.show()
+            # else:
+                # plt.show()

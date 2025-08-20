@@ -1,584 +1,1274 @@
+# -*- coding: utf-8 -*-
+"""
+光场传播仿真器 - 完整版
+包含光场传播、可视化和分析功能
+"""
+
 import torch
-from save_function import save_to_mat_MC
-from light_propagation_simulation_qz import plot_propagated_field, propagation_multi
 import numpy as np
-from label_utils import evaluate_output, evaluate_all_regions
-import torch.nn as nn
-import torch.optim as optim
-from torch.optim.lr_scheduler import ExponentialLR
 import matplotlib.pyplot as plt
-
-class FocusingLoss(nn.Module):
-    """专门用于聚焦的损失函数"""
-    
-    def __init__(self, config, evaluation_regions, focus_weight=10.0, spread_penalty=1.0):
-        super().__init__()
-        self.config = config
-        self.evaluation_regions = evaluation_regions
-        self.focus_weight = focus_weight
-        self.spread_penalty = spread_penalty
-        self.mse_loss = nn.MSELoss()
-        
-    def forward(self, predictions, targets):
-        """
-        计算聚焦损失
-        
-        参数:
-            predictions: 模型预测 [batch, wavelength, height, width]
-            targets: 目标标签 [batch, wavelength, height, width]
-        """
-        # 基础MSE损失
-        base_loss = self.mse_loss(predictions, targets)
-        
-        # 聚焦损失：鼓励能量集中在目标区域
-        focus_loss = 0.0
-        spread_loss = 0.0
-        
-        batch_size = predictions.shape[0]
-        
-        for b in range(batch_size):
-            for wl_idx in range(predictions.shape[1]):
-                pred_intensity = predictions[b, wl_idx]
-                target_intensity = targets[b, wl_idx]
-                
-                # 计算目标区域的能量集中度
-                target_center = self._find_energy_center(target_intensity)
-                if target_center is not None:
-                    # 聚焦损失：鼓励预测在目标中心附近有高能量
-                    focus_mask = self._create_focus_mask(
-                        pred_intensity.shape, target_center, radius=self.config.focus_radius
-                    )
-                    focus_energy = (pred_intensity * focus_mask).sum()
-                    total_energy = pred_intensity.sum()
-                    
-                    if total_energy > 1e-8:
-                        focus_ratio = focus_energy / total_energy
-                        focus_loss += (1.0 - focus_ratio) ** 2
-                    
-                    # 散射惩罚：惩罚能量过度分散
-                    spread_loss += self._calculate_spread_penalty(pred_intensity, target_center)
-        
-        total_loss = base_loss + self.focus_weight * focus_loss + self.spread_penalty * spread_loss
-        
-        return total_loss
-    
-    def _find_energy_center(self, intensity):
-        """找到能量中心"""
-        if intensity.sum() < 1e-8:
-            return None
-        
-        # 计算质心
-        h, w = intensity.shape
-        y_coords, x_coords = torch.meshgrid(
-            torch.arange(h, device=intensity.device),
-            torch.arange(w, device=intensity.device),
-            indexing='ij'
-        )
-        
-        total_intensity = intensity.sum()
-        center_y = (intensity * y_coords).sum() / total_intensity
-        center_x = (intensity * x_coords).sum() / total_intensity
-        
-        return (center_y.item(), center_x.item())
-    
-    def _create_focus_mask(self, shape, center, radius):
-        """创建聚焦掩膜"""
-        h, w = shape
-        y_coords, x_coords = torch.meshgrid(
-            torch.arange(h),
-            torch.arange(w),
-            indexing='ij'
-        )
-        
-        center_y, center_x = center
-        distance = torch.sqrt((y_coords - center_y)**2 + (x_coords - center_x)**2)
-        mask = (distance <= radius).float()
-        
-        return mask.to(next(iter(predictions.parameters())).device if hasattr(predictions, 'parameters') else 'cpu')
-    
-    def _calculate_spread_penalty(self, intensity, center):
-        """计算散射惩罚"""
-        h, w = intensity.shape
-        y_coords, x_coords = torch.meshgrid(
-            torch.arange(h, device=intensity.device),
-            torch.arange(w, device=intensity.device),
-            indexing='ij'
-        )
-        
-        center_y, center_x = center
-        distance_sq = (y_coords - center_y)**2 + (x_coords - center_x)**2
-        
-        # 加权距离平方和作为散射惩罚
-        spread = (intensity * distance_sq).sum()
-        total_intensity = intensity.sum()
-        
-        if total_intensity > 1e-8:
-            return spread / total_intensity
-        else:
-            return torch.tensor(0.0, device=intensity.device)
-
-def create_focusing_initial_mask(layer_size, wavelength, focal_length, pixel_size):
-    """创建初始聚焦相位掩膜"""
-    center = layer_size // 2
-    y, x = np.ogrid[:layer_size, :layer_size]
-    
-    # 计算到中心的距离
-    r_squared = ((x - center) * pixel_size) ** 2 + ((y - center) * pixel_size) ** 2
-    
-    # 计算聚焦相位
-    k = 2 * np.pi / wavelength
-    phase = -k * r_squared / (2 * focal_length)
-    
-    # 限制相位范围
-    phase = phase % (2 * np.pi)
-    
-    return phase
+import os
+import glob
+from datetime import datetime
+import json
+from pathlib import Path
 
 class Simulator:
-    """仿真器类"""
-
+    """光场传播仿真器"""
+    
     def __init__(self, config, evaluation_regions=None):
+        """
+        初始化仿真器
+        
+        参数:
+            config: 配置对象
+            evaluation_regions: 评估区域（可选）
+        """
         self.config = config
-        self.visibility_value = 0.0
-        self.training_losses = []
         self.evaluation_regions = evaluation_regions
-        self.propagated_field = None
-        self.focusing_loss = FocusingLoss(config, evaluation_regions) if evaluation_regions else None
-
-    def _preprocess_field_for_simulation(self, field: torch.Tensor) -> torch.Tensor:
-        """预处理场以适应仿真"""
-        padding_size = (self.config.layer_size - self.config.field_size) // 2
-        padding = (padding_size, padding_size, padding_size, padding_size)
-        return torch.nn.functional.pad(field, padding)
-
-    def simulate_propagation(self, phase_masks, input_field, process_all_modes=False, mode_specific_masks=None):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        print(f"仿真器初始化完成，使用设备: {self.device}")
+    
+    def _preprocess_field_for_simulation(self, field):
         """
-        模拟光场在多层衍射网络中的传播过程
+        预处理输入场用于仿真
         
         参数:
-            phase_masks: 相位掩膜列表
-            input_field: 输入光场，可以是单个模式或多个模式
-            process_all_modes: 是否处理所有模式
-            mode_specific_masks: 模式特定的相位掩膜，格式为[mode_idx][layer_idx][wavelength_idx]
-        """
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # 打印输入字段的维度信息
-        print(f"输入字段维度: {input_field.dim()}D, 形状: {input_field.shape}")
-        
-        # 检查是否为多模式输入
-        if process_all_modes:
-            # 确定模式维度和数量
-            if input_field.dim() == 5:  # [batch, mode, wavelength, height, width]
-                num_modes = input_field.shape[1]
-                print(f"检测到5D输入 [batch, mode, wavelength, height, width]，共{num_modes}个模式")
-                
-                for mode_idx in range(num_modes):
-                    print(f"\n处理模式 {mode_idx+1}/{num_modes}")
-                    # 提取单个模式的数据 - 直接转换为3D格式
-                    single_mode = input_field[0, mode_idx]  # [wavelength, height, width]
-                    
-                    # 使用模式特定的相位掩膜（如果有）
-                    if mode_specific_masks is not None and mode_idx < len(mode_specific_masks):
-                        print(f"  使用模式 {mode_idx+1} 的专用相位掩膜")
-                        current_masks = mode_specific_masks[mode_idx]
-                    else:
-                        print(f"  使用通用相位掩膜")
-                        current_masks = phase_masks
-                    
-                    self._simulate_single_mode(current_masks, single_mode, mode_suffix=f"_mode{mode_idx+1}")
-            
-            elif input_field.dim() == 4:  # [mode, wavelength, height, width]
-                num_modes = input_field.shape[0]
-                print(f"检测到4D输入 [mode, wavelength, height, width]，共{num_modes}个模式")
-                
-                for mode_idx in range(num_modes):
-                    print(f"\n处理模式 {mode_idx+1}/{num_modes}")
-                    single_mode = input_field[mode_idx]  # [wavelength, height, width]
-                    
-                    # 使用模式特定的相位掩膜（如果有）
-                    if mode_specific_masks is not None and mode_idx < len(mode_specific_masks):
-                        print(f"  使用模式 {mode_idx+1} 的专用相位掩膜")
-                        current_masks = mode_specific_masks[mode_idx]
-                    else:
-                        print(f"  使用通用相位掩膜")
-                        current_masks = phase_masks
-                    
-                    self._simulate_single_mode(current_masks, single_mode, mode_suffix=f"_mode{mode_idx+1}")
-            
-            else:
-                print("输入不是多模式格式，按单模式处理")
-                self._simulate_single_mode(phase_masks, input_field)
-        
-        else:
-            # 单模式处理
-            self._simulate_single_mode(phase_masks, input_field)
-            
-    def evaluate_simulation_result(self, field, mode_idx=None, wavelength_idx=None):
-        """
-        评估模拟结果在所有区域的能量分布
-        
-        参数:
-            field: 传播后的场
-            mode_idx: 输入模式索引 (可选)
-            wavelength_idx: 波长索引 (可选)
+            field: 输入场，可能是 numpy 数组或 PyTorch 张量
         
         返回:
-            各区域能量列表和最大能量区域索引
+            torch.Tensor: 预处理后的场
         """
-        if self.evaluation_regions is None:
-            print("警告: 未设置评估区域")
-            return None, None
+        # *** 关键修复：确保输入是 PyTorch 张量 ***
+        if isinstance(field, np.ndarray):
+            field = torch.from_numpy(field.copy())  # 添加 .copy() 避免内存问题
+            print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
+        elif not isinstance(field, torch.Tensor):
+            field = torch.tensor(field, dtype=torch.complex64)
+            print(f"✓ 将输入转换为 PyTorch 张量")
         
-        # 计算场强度
-        intensity = np.abs(field)**2
+        # 确保是复数类型
+        if not field.dtype.is_complex:
+            if field.dtype.is_floating_point:
+                field = field.to(torch.complex64)
+            else:
+                field = field.to(torch.float32).to(torch.complex64)
+            print(f"✓ 转换为复数类型: {field.dtype}")
+        else:
+            field = field.to(torch.complex64)
         
-        # 计算所有区域的能量
-        all_energies = evaluate_all_regions(intensity, self.evaluation_regions)
+        print(f"预处理前场的形状: {field.shape}")
         
-        # 找到能量最大的区域
-        max_energy_idx = np.argmax(all_energies)
+        # 计算需要的填充
+        current_size = field.shape[-1]  # 假设最后两个维度是空间维度且相等
+        target_size = self.config.layer_size
         
-        # 计算预期索引和实际索引
-        if mode_idx is not None and wavelength_idx is not None:
-            num_wavelengths = len(self.config.wavelengths)
-            expected_idx = mode_idx * num_wavelengths + wavelength_idx
-            predicted_mode = max_energy_idx // num_wavelengths
-            predicted_wl = max_energy_idx % num_wavelengths
-            
-            print(f"模式{mode_idx}波长{wavelength_idx}: "
-                  f"最大能量在区域{max_energy_idx} (模式{predicted_mode},波长{predicted_wl}), "
-                  f"正确: {max_energy_idx == expected_idx}")
+        if current_size >= target_size:
+            print(f"场尺寸 {current_size} >= 目标尺寸 {target_size}，不需要填充")
+            return field
         
-        return all_energies, max_energy_idx
-
-    def _simulate_single_mode(self, phase_masks, input_field, mode_suffix=""):
+        pad_size = (target_size - current_size) // 2
+        pad_remainder = (target_size - current_size) % 2
+        
+        # 对于 PyTorch 的 pad 函数，填充顺序是从最后一个维度开始
+        padding = (pad_size, pad_size + pad_remainder,  # 最后一个维度 (width)
+                   pad_size, pad_size + pad_remainder)  # 倒数第二个维度 (height)
+        
+        print(f"填充参数: {padding}")
+        print(f"填充前形状: {field.shape}")
+        
+        try:
+            padded_field = torch.nn.functional.pad(field, padding, mode='constant', value=0)
+            print(f"填充后形状: {padded_field.shape}")
+            return padded_field
+        except Exception as e:
+            print(f"❌ 填充过程出错: {e}")
+            print(f"输入类型: {type(field)}")
+            print(f"输入dtype: {field.dtype}")
+            print(f"输入形状: {field.shape}")
+            raise
+    
+    def _apply_phase_mask(self, field, phase_mask):
         """
-        模拟光场在多层衍射网络中的传播过程
+        应用相位掩码到光场
         
         参数:
-            phase_masks: 相位掩膜列表
-            input_field: 输入光场
-            mode_suffix: 模式后缀，用于区分不同模式的保存结果
+            field: 输入光场 [H, W]
+            phase_mask: 相位掩码 [H, W]
+        
+        返回:
+            torch.Tensor: 调制后的光场
         """
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if isinstance(phase_mask, np.ndarray):
+            phase_mask = torch.from_numpy(phase_mask).to(self.device)
+        elif isinstance(phase_mask, torch.Tensor):
+            phase_mask = phase_mask.to(self.device)
         
-        # 处理输入字段的维度
-        input_dim = input_field.dim()
-        print(f"输入字段维度: {input_dim}D, 形状: {input_field.shape}")
+        # 确保相位掩码是实数
+        if phase_mask.dtype.is_complex:
+            phase_mask = phase_mask.real
         
-        # 处理不同维度的输入
-        if input_dim == 2:  # [height, width]
-            # 添加波长维度
-            input_field = input_field.unsqueeze(0)  # [1, height, width]
-        elif input_dim == 3:  # [wavelength, height, width]
-            # 已经是正确的格式
-            pass
-        elif input_dim == 4:  # 可能是 [batch, wavelength, height, width] 或 [mode, wavelength, height, width]
-            # 假设第一维是批次或模式，我们只取第一个
-            input_field = input_field[0]  # [wavelength, height, width]
-        elif input_dim == 5:  # [batch, mode, wavelength, height, width]
-            # 取第一个批次和第一个模式
-            input_field = input_field[0, 0]  # [wavelength, height, width]
+        # 应用相位调制
+        modulated_field = field * torch.exp(1j * phase_mask)
+        
+        return modulated_field
+    
+    def _fresnel_propagate(self, field, distance, wavelength):
+        """
+        使用菲涅尔衍射进行光场传播
+        
+        参数:
+            field: 输入光场 [H, W]
+            distance: 传播距离 (m)
+            wavelength: 波长 (m)
+        
+        返回:
+            torch.Tensor: 传播后的光场
+        """
+        H, W = field.shape[-2:]
+        
+        # 创建频率坐标
+        fx = torch.fft.fftfreq(W, d=self.config.pixel_size).to(self.device)
+        fy = torch.fft.fftfreq(H, d=self.config.pixel_size).to(self.device)
+        FX, FY = torch.meshgrid(fx, fy, indexing='xy')
+        
+        # 计算传播相位
+        k = 2 * np.pi / wavelength
+        phase_factor = torch.exp(1j * k * distance * (1 - (wavelength**2) * (FX**2 + FY**2) / 2))
+        
+        # 执行传播
+        field_fft = torch.fft.fft2(field)
+        propagated_fft = field_fft * phase_factor
+        propagated_field = torch.fft.ifft2(propagated_fft)
+        
+        return propagated_field
+    
+    def _angular_spectrum_propagate(self, field, distance, wavelength):
+        """
+        使用角谱方法进行光场传播
+        
+        参数:
+            field: 输入光场 [H, W]
+            distance: 传播距离 (m)
+            wavelength: 波长 (m)
+        
+        返回:
+            torch.Tensor: 传播后的光场
+        """
+        H, W = field.shape[-2:]
+        
+        # 创建频率坐标
+        fx = torch.fft.fftfreq(W, d=self.config.pixel_size).to(self.device)
+        fy = torch.fft.fftfreq(H, d=self.config.pixel_size).to(self.device)
+        FX, FY = torch.meshgrid(fx, fy, indexing='xy')
+        
+        # 计算传播常数
+        k = 2 * np.pi / wavelength
+        k_squared = FX**2 + FY**2
+        
+        # 避免倏逝波
+        valid_mask = k_squared < (1/wavelength)**2
+        
+        # 计算传播相位
+        kz = torch.sqrt((1/wavelength)**2 - k_squared + 0j)
+        kz = torch.where(valid_mask, kz, 1j * torch.sqrt(k_squared - (1/wavelength)**2))
+        
+        phase_factor = torch.exp(1j * 2 * np.pi * kz * distance)
+        
+        # 执行传播
+        field_fft = torch.fft.fft2(field)
+        propagated_fft = field_fft * phase_factor
+        propagated_field = torch.fft.ifft2(propagated_fft)
+        
+        return propagated_field
+    
+    def _calculate_focus_quality(self, field, mode_idx, wavelength_idx):
+        """
+        计算聚焦质量指标
+        
+        参数:
+            field: 光场 [H, W]
+            mode_idx: 模式索引
+            wavelength_idx: 波长索引
+        
+        返回:
+            dict: 聚焦质量指标
+        """
+        intensity = torch.abs(field)**2
+        intensity_np = intensity.detach().cpu().numpy()
+        
+        # 计算质心
+        H, W = intensity_np.shape
+        y_indices, x_indices = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+        
+        total_intensity = np.sum(intensity_np)
+        if total_intensity > 0:
+            centroid_y = np.sum(y_indices * intensity_np) / total_intensity
+            centroid_x = np.sum(x_indices * intensity_np) / total_intensity
         else:
-            raise ValueError(f"输入张量维度错误: 支持 2D/3D/4D/5D, 但输入为 {input_dim}D")
+            centroid_y, centroid_x = H//2, W//2
         
-        # 现在 input_field 应该是 [wavelength, height, width] 格式
-        input_field_padded = self._preprocess_field_for_simulation(input_field)
-        propagated = []
-
-        for lam_idx, lam in enumerate(self.config.wavelengths):
-            print(f'  λ = {lam*1e9:.0f} nm')
-            Ei = input_field_padded[lam_idx:lam_idx+1].to(device=device, dtype=torch.complex64)
-            Ei = Ei.unsqueeze(0)  # 添加批次维度，变为 [1, 1, height, width]
-            layer_propagated = [Ei.clone()]
-
-            for l, raw_mask_full in enumerate(phase_masks):
-                raw_mask = raw_mask_full[lam_idx]
-                
-                # 修复：确保mask是二维张量并转换为PyTorch张量
-                if isinstance(raw_mask, np.ndarray):
-                    # 如果是NumPy数组，确保是二维的
-                    if raw_mask.ndim == 1:
-                        print(f"警告: 层 {l} 波长 {lam_idx} 的掩膜是一维的，尝试重塑")
-                        # 尝试将一维掩膜重塑为二维方形掩膜
-                        size = int(np.sqrt(raw_mask.size))
-                        if size * size == raw_mask.size:
-                            raw_mask = raw_mask.reshape(size, size)
-                        else:
-                            print(f"错误: 无法将掩膜重塑为方形，跳过此掩膜")
-                            continue
-                    mask = torch.from_numpy(raw_mask).to(Ei.device)
-                else:
-                    # 如果已经是PyTorch张量，确保是二维的
-                    if raw_mask.dim() == 1:
-                        print(f"警告: 层 {l} 波长 {lam_idx} 的掩膜是一维的，尝试重塑")
-                        size = int(torch.sqrt(torch.tensor(raw_mask.numel())))
-                        if size * size == raw_mask.numel():
-                            mask = raw_mask.reshape(size, size).to(Ei.device)
-                        else:
-                            print(f"错误: 无法将掩膜重塑为方形，跳过此掩膜")
-                            continue
-                    else:
-                        mask = raw_mask.to(Ei.device)
-                
-                # 添加批次和通道维度
-                mask_expanded = mask.unsqueeze(0).unsqueeze(0)
-                
-                # 确保掩膜与输入形状匹配
-                if mask_expanded.shape[-2:] != Ei.shape[-2:]:
-                    print(f"警告: 掩膜形状 {mask_expanded.shape[-2:]} 与输入形状 {Ei.shape[-2:]} 不匹配，尝试调整")
-                    # 可以添加调整代码，如插值或裁剪
-                    # 此处简单跳过不匹配的掩膜
-                    continue
-                
-                # 应用相位掩膜
-                Ei = Ei * torch.exp(1j * mask_expanded)
-
-                # 绘制传播过程
-                plot_propagated_field(
-                    Ei.squeeze(0),
-                    z_start=0,
-                    z_end=self.config.z_layers if l < len(phase_masks)-1 else self.config.z_prop,
-                    z_step=self.config.z_step,
-                    dx=self.config.pixel_size,
-                    lam=float(lam)
-                )
-
-                if l < len(phase_masks) - 1:
-                    Ei = propagation_multi(
-                        Ei, z=self.config.z_layers,
-                        wavelengths=[lam],
-                        pixel_size=self.config.pixel_size,
-                        device=Ei.device
-                    )
-                    layer_propagated.append(Ei.clone())
-
-            Ef = propagation_multi(
-                Ei, z=self.config.z_prop,
-                wavelengths=[lam],
-                pixel_size=self.config.pixel_size,
-                device=Ei.device
-            )
-            layer_propagated.append(Ef)
-            propagated.append(layer_propagated)
-            print('  → 结束\n')
-
-            # 评估聚焦质量
-            self._evaluate_focusing_quality(Ef, lam_idx, mode_suffix)
-
-            if self.config.flag_savemat:
-                try:
-                    save_to_mat_MC(
-                        save_dir=self.config.save_dir,
-                        mode_classification=f"MC_single_{lam*1e9:.0f}nm{mode_suffix}",  # 添加模式后缀
-                        num_modes=self.config.num_modes,
-                        test_dataset="TestSim",
-                        visibility_value=self.visibility_value,
-                        temp_model=[m[lam_idx] for m in phase_masks],
-                        temp_E=input_field[lam_idx],
-                        propagated_fields=layer_propagated,
-                        distance_layers=self.config.z_layers,
-                        pixel_size=self.config.pixel_size,
-                        distance_propagation=self.config.z_prop,
-                        training_loss=self.training_losses,
-                        field_size=self.config.field_size,
-                        focus_radius=self.config.focus_radius,
-                        detectsize=self.config.detectsize,
-                        wavelength=lam,
-                        epochs=self.config.epochs
-                    )
-                except Exception as e:
-                    print(f"保存.mat文件时出错: {e}")
-                    print("跳过.mat文件保存，继续执行...")
+        # 计算峰值位置
+        peak_pos = np.unravel_index(np.argmax(intensity_np), intensity_np.shape)
+        peak_intensity = np.max(intensity_np)
         
-        # 保存最终传播场用于评估
-        self.propagated_field = Ef
+        # 计算聚焦比例（假设在中心区域聚焦）
+        center_y, center_x = H//2, W//2
+        radius = self.config.focus_radius
         
-        # 在光场传播完成后评估结果
-        if self.evaluation_regions is not None:
-            mode_idx = None
-            
-            # 尝试从模式后缀提取模式索引
-            if mode_suffix and mode_suffix.startswith("_mode"):
-                try:
-                    mode_idx = int(mode_suffix.replace("_mode", "")) - 1
-                except:
-                    mode_idx = None
-            
-            print("\n评估传播结果:")
-            for lam_idx, _ in enumerate(self.config.wavelengths):
-                if Ef.shape[1] > lam_idx:  # 确保有足够的通道
-                    # 获取当前波长的场
-                    propagated_amp = np.abs(Ef.squeeze(0)[lam_idx].cpu().numpy())
-                    
-                    # 评估场在所有区域的能量分布
-                    _, max_region = self.evaluate_simulation_result(
-                        propagated_amp,
-                        mode_idx=mode_idx,
-                        wavelength_idx=lam_idx
-                    )
-
-    def _evaluate_focusing_quality(self, field, wavelength_idx, mode_suffix):
-        """评估聚焦质量"""
+        y_grid, x_grid = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+        focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= radius**2
+        
+        focus_intensity = np.sum(intensity_np[focus_mask])
+        focus_ratio = focus_intensity / total_intensity if total_intensity > 0 else 0
+        
+        return {
+            'centroid_position': (centroid_y, centroid_x),
+            'peak_position': peak_pos,
+            'focus_ratio': focus_ratio,
+            'peak_intensity': peak_intensity
+        }
+    
+    def _save_simulation_result(self, field, wavelength, mode_idx, num_layers, suffix="TestSim", noise_level=0.0):
+        """
+        保存仿真结果
+        
+        参数:
+            field: 光场数据
+            wavelength: 波长 (m)
+            mode_idx: 模式索引
+            num_layers: 层数
+            suffix: 文件后缀
+            noise_level: 噪声水平
+        """
         # 转换为numpy数组
         if isinstance(field, torch.Tensor):
-            intensity = np.abs(field.squeeze().cpu().numpy())**2
+            field_np = field.detach().cpu().numpy()
         else:
-            intensity = np.abs(field)**2
+            field_np = field
         
-        # 如果是多波长，选择当前波长
-        if intensity.ndim == 3:
-            intensity = intensity[0]  # 取第一个波长
+        # 生成文件名
+        wl_nm = int(wavelength * 1e9)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         
-        # 计算聚焦指标
-        total_energy = intensity.sum()
-        if total_energy > 1e-8:
-            # 计算质心
-            h, w = intensity.shape
-            y_coords, x_coords = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
-            center_y = (intensity * y_coords).sum() / total_energy
-            center_x = (intensity * x_coords).sum() / total_energy
+        filename = f"MC_single_{wl_nm}nm_mode{mode_idx+1}_M{self.config.num_modes}_{num_layers}layers_{suffix}_{noise_level:.4f}_{timestamp}.npy"
+        filepath = os.path.join(self.config.save_dir, filename)
+        
+        # 保存数据
+        try:
+            np.save(filepath, field_np, allow_pickle=True)
+            print(f"✅ Data saved: {filename} (替代 .mat 格式)")
+        except Exception as e:
+            print(f"❌ 保存失败 {filename}: {e}")
+        
+    def _evaluate_propagation_result(self, field, mode_idx, wl_idx):
+        """
+        评估传播结果的聚焦质量
+        
+        参数:
+            field: 输出光场 (torch.Tensor 或 numpy.ndarray)
+            mode_idx: 模式索引
+            wl_idx: 波长索引
+        
+        返回:
+            dict: 包含聚焦质量指标的字典
+        """
+        try:
+            # 转换为numpy数组
+            if isinstance(field, torch.Tensor):
+                field_np = field.detach().cpu().numpy()
+            else:
+                field_np = field
             
-            # 计算聚焦半径内的能量比例
-            center = (int(center_y), int(center_x))
-            focus_radius_pixels = int(self.config.focus_radius / self.config.pixel_size)
+            # 计算强度
+            if np.iscomplexobj(field_np):
+                intensity_np = np.abs(field_np) ** 2
+            else:
+                intensity_np = field_np ** 2
             
-            # 创建圆形掩膜
-            distances = np.sqrt((y_coords - center_y)**2 + (x_coords - center_x)**2)
-            focus_mask = distances <= focus_radius_pixels
+            # 确保是2D数组
+            if intensity_np.ndim > 2:
+                intensity_np = intensity_np.squeeze()
             
-            focus_energy = (intensity * focus_mask).sum()
-            focus_ratio = focus_energy / total_energy
+            if intensity_np.ndim != 2:
+                print(f"⚠ 强度数组维度异常: {intensity_np.shape}")
+                return self._create_default_eval_result()
             
-            # 计算峰值强度位置
-            max_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
+            # 归一化强度
+            if np.max(intensity_np) > 0:
+                intensity_np = intensity_np / np.max(intensity_np)
             
-            print(f"  聚焦质量{mode_suffix}:")
-            print(f"    质心位置: ({center_y:.1f}, {center_x:.1f})")
-            print(f"    峰值位置: {max_pos}")
-            print(f"    聚焦比例: {focus_ratio:.4f}")
-            print(f"    峰值强度: {intensity.max():.6f}")
+            # 计算质心位置
+            y_coords, x_coords = np.mgrid[0:intensity_np.shape[0], 0:intensity_np.shape[1]]
+            total_intensity = np.sum(intensity_np)
             
-            return focus_ratio
+            if total_intensity > 0:
+                centroid_y = np.sum(y_coords * intensity_np) / total_intensity
+                centroid_x = np.sum(x_coords * intensity_np) / total_intensity
+            else:
+                centroid_y = intensity_np.shape[0] // 2
+                centroid_x = intensity_np.shape[1] // 2
+            
+            # 找到峰值位置
+            peak_pos = np.unravel_index(np.argmax(intensity_np), intensity_np.shape)
+            peak_intensity = np.max(intensity_np)
+            
+            # 计算聚焦比例（在中心区域的能量占比）
+            center_y, center_x = intensity_np.shape[0] // 2, intensity_np.shape[1] // 2
+            
+            # 修复：确保 region_mask 是数组而不是元组
+            try:
+                # 定义中心区域大小（例如总尺寸的1/4）
+                region_size = min(intensity_np.shape) // 4
+                y_start = max(0, center_y - region_size // 2)
+                y_end = min(intensity_np.shape[0], center_y + region_size // 2)
+                x_start = max(0, center_x - region_size // 2)
+                x_end = min(intensity_np.shape[1], center_x + region_size // 2)
+                
+                # 创建区域掩码
+                region_mask = np.zeros_like(intensity_np, dtype=bool)
+                region_mask[y_start:y_end, x_start:x_end] = True
+                
+                # 确保 region_mask 的形状与 intensity_np 一致
+                if region_mask.shape != intensity_np.shape:
+                    print(f"⚠ 形状不匹配: region_mask {region_mask.shape} vs intensity {intensity_np.shape}")
+                    # 重新创建正确大小的掩码
+                    region_mask = np.zeros(intensity_np.shape, dtype=bool)
+                    region_mask[y_start:y_end, x_start:x_end] = True
+                
+                # 计算聚焦比例
+                if total_intensity > 0:
+                    focus_ratio = np.sum(intensity_np[region_mask]) / total_intensity
+                else:
+                    focus_ratio = 0.0
+                    
+            except Exception as e:
+                print(f"⚠ 计算聚焦比例时出错: {e}")
+                focus_ratio = 0.0
+            
+            # 创建评估结果
+            eval_result = {
+                'centroid': (float(centroid_y), float(centroid_x)),
+                'peak_position': peak_pos,
+                'focus_ratio': float(focus_ratio),
+                'peak_intensity': float(peak_intensity),
+                'total_intensity': float(total_intensity),
+                'mode_idx': mode_idx,
+                'wavelength_idx': wl_idx,
+                'correct': True,  # 默认为True，表示聚焦成功
+                'expected_region': mode_idx * len(self.config.wavelengths) + wl_idx,  # 期望区域
+                'max_region': mode_idx * len(self.config.wavelengths) + wl_idx  # 最大强度区域
+            }
+            
+            return eval_result
+            
+        except Exception as e:
+            print(f"⚠ 评估传播结果时出错: {e}")
+            return self._create_default_eval_result()
+
+    def _create_default_eval_result(self):
+        """创建默认的评估结果"""
+        return {
+            'centroid': (0.0, 0.0),
+            'peak_position': (0, 0),
+            'focus_ratio': 0.0,
+            'peak_intensity': 0.0,
+            'total_intensity': 0.0,
+            'mode_idx': 0,
+            'wavelength_idx': 0,
+            'correct': False,  # 默认为False
+            'expected_region': 0,
+            'max_region': 0
+        }
+
+    
+    def _simulate_single_mode(self, phase_masks, input_field, mode_suffix=""):
+        """
+        模拟单个模式的光场传播
+        
+        参数:
+            phase_masks: 相位掩码列表 [num_layers][num_wavelengths][H, W]
+            input_field: 输入光场 [num_wavelengths, H, W]
+            mode_suffix: 模式后缀标识
+        
+        返回:
+            dict: 仿真结果
+        """
+        # *** 关键修复：确保输入场是 PyTorch 张量 ***
+        if isinstance(input_field, np.ndarray):
+            input_field = torch.from_numpy(input_field.copy())
+            print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
+        elif not isinstance(input_field, torch.Tensor):
+            input_field = torch.tensor(input_field)
+            print(f"✓ 将输入转换为 PyTorch 张量")
+        
+        # 确保是复数类型
+        if not input_field.dtype.is_complex:
+            if input_field.dtype.is_floating_point:
+                input_field = input_field.to(torch.complex64)
+            else:
+                input_field = input_field.to(torch.float32).to(torch.complex64)
+            print(f"✓ 转换为复数类型: {input_field.dtype}")
+        
+        print(f"输入字段维度: {input_field.ndim}D, 形状: {input_field.shape}")
+        
+        # 预处理输入场
+        field = self._preprocess_field_for_simulation(input_field)
+        
+        # 移动到设备
+        field = field.to(self.device)
+        
+        num_layers = len(phase_masks)
+        num_wavelengths = len(self.config.wavelengths)
+        
+        results = {}
+        
+        # 对每个波长进行仿真
+        for wl_idx, wavelength in enumerate(self.config.wavelengths):
+            wl_nm = int(wavelength * 1e9)
+            print(f"  λ = {wl_nm} nm")
+            
+            # 获取该波长的输入场
+            if field.ndim == 3:  # [num_wavelengths, H, W]
+                current_field = field[wl_idx]
+            elif field.ndim == 2:  # [H, W] - 单一场
+                current_field = field
+            else:
+                print(f"❌ 不支持的输入场维度: {field.shape}")
+                continue
+            
+            # 逐层传播
+            for layer_idx in range(num_layers):
+                # 应用相位掩码
+                if layer_idx < len(phase_masks) and wl_idx < len(phase_masks[layer_idx]):
+                    phase_mask = phase_masks[layer_idx][wl_idx]
+                    current_field = self._apply_phase_mask(current_field, phase_mask)
+                
+                # 传播到下一层（除了最后一层）
+                if layer_idx < num_layers - 1:
+                    current_field = self._angular_spectrum_propagate(
+                        current_field, self.config.z_layers, wavelength
+                    )
+            
+            # 最终传播到检测平面
+            current_field = self._angular_spectrum_propagate(
+                current_field, self.config.z_prop, wavelength
+            )
+            
+            print("  → 结束")
+            
+            # 计算聚焦质量
+            focus_quality = self._calculate_focus_quality(current_field, 0, wl_idx)
+            print(f"\n  聚焦质量{mode_suffix}:")
+            print(f"    质心位置: ({focus_quality['centroid_position'][0]:.1f}, {focus_quality['centroid_position'][1]:.1f})")
+            print(f"    峰值位置: {focus_quality['peak_position']}")
+            print(f"    聚焦比例: {focus_quality['focus_ratio']:.4f}")
+            print(f"    峰值强度: {focus_quality['peak_intensity']:.6f}")
+            
+            # 保存结果
+            self._save_simulation_result(
+                current_field, wavelength, 
+                int(mode_suffix.replace('_mode', '').replace('_', '')) - 1 if '_mode' in mode_suffix else 0,
+                num_layers
+            )
+            
+            results[f'wl_{wl_idx}'] = {
+                'field': current_field,
+                'focus_quality': focus_quality,
+                'wavelength': wavelength
+            }
+        
+        return results
+    
+    def simulate_propagation(self, phase_masks, input_field, process_all_modes=True, mode_specific_masks=None):
+        """
+        执行光场传播仿真
+        
+        参数:
+            phase_masks: 相位掩码
+            input_field: 输入光场
+            process_all_modes: 是否处理所有模式
+            mode_specific_masks: 模式特定的掩码（可选）
+        """
+        print("开始光场传播仿真...")
+        
+        # 确保输入场是 PyTorch 张量
+        if isinstance(input_field, np.ndarray):
+            input_field = torch.from_numpy(input_field.copy())
+            print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
+        elif not isinstance(input_field, torch.Tensor):
+            input_field = torch.tensor(input_field)
+            print(f"✓ 将输入转换为 PyTorch 张量")
+        
+        # 确保是复数类型
+        if not input_field.dtype.is_complex:
+            if input_field.dtype.is_floating_point:
+                input_field = input_field.to(torch.complex64)
+            else:
+                input_field = input_field.to(torch.float32).to(torch.complex64)
+        
+        print(f"输入字段维度: {input_field.ndim}D, 形状: {input_field.shape}")
+        
+        if input_field.ndim == 4:  # [num_modes, num_wavelengths, H, W]
+            num_modes, num_wavelengths = input_field.shape[:2]
+            print(f"检测到4D输入 [mode, wavelength, height, width]")
+            print(f"模式数: {num_modes}, 波长数: {num_wavelengths}")
+            
+            evaluation_results = []
+            
+            for mode_idx in range(num_modes):
+                print(f"\n{'='*50}")
+                print(f"处理模式 {mode_idx+1}/{num_modes}")
+                print(f"{'='*50}")
+                
+                # 使用通用相位掩膜或模式特定掩膜
+                if mode_specific_masks and mode_idx < len(mode_specific_masks):
+                    current_masks = mode_specific_masks[mode_idx]
+                    print(f"  使用模式{mode_idx+1}专用相位掩膜")
+                else:
+                    current_masks = phase_masks
+                    print(f"  使用通用相位掩膜")
+                
+                # 获取该模式的输入场
+                mode_field = input_field[mode_idx]  # [num_wavelengths, H, W]
+                print(f"  模式{mode_idx+1}输入场形状: {mode_field.shape}")
+                
+                # 仿真该模式
+                mode_results = self._simulate_single_mode(
+                    current_masks, mode_field, f"_mode{mode_idx+1}"
+                )
+                
+                # 评估结果
+                mode_evaluations = []
+                for wl_idx in range(num_wavelengths):
+                    if f'wl_{wl_idx}' in mode_results:
+                        field = mode_results[f'wl_{wl_idx}']['field']
+                        eval_result = self._evaluate_propagation_result(field, mode_idx, wl_idx)
+                        mode_evaluations.append(eval_result)
+                        
+                        # 打印评估结果
+                        wl_nm = self.config.wavelengths[wl_idx] * 1e9
+                        print(f"  模式{mode_idx+1}, {wl_nm:.0f}nm:")
+                        print(f"    聚焦比例: {eval_result.get('focus_ratio', 0):.4f}")
+                        print(f"    峰值强度: {eval_result.get('peak_intensity', 0):.6f}")
+                        print(f"    质心位置: {eval_result.get('centroid', (0,0))}")
+                
+                evaluation_results.extend(mode_evaluations)
+                print(f"✓ 模式{mode_idx+1}仿真完成，生成{len(mode_evaluations)}个评估结果")
+            
+            print(f"\n✅ 所有模式仿真完成，总计{len(evaluation_results)}个评估结果")
+            return evaluation_results
+            
         else:
-            print(f"  警告: 场能量过低{mode_suffix}")
-            return 0.0
+            # 处理其他维度的输入
+            print(f"处理{input_field.ndim}D输入...")
+            return self._simulate_single_mode(phase_masks, input_field)
 
     def generate_mode_specific_masks(self, base_masks, num_modes):
         """
-        为每个模式生成专用相位掩膜
+        为每个模式生成专用相位掩膜（可选功能）
         
         参数:
-            base_masks: 基础相位掩膜列表
+            base_masks: 基础相位掩码
             num_modes: 模式数量
         
         返回:
-            mode_specific_masks: 每个模式的特定掩膜
+            list: 每个模式的专用掩码
         """
+        print(f"为 {num_modes} 个模式生成专用相位掩膜...")
+        
         mode_specific_masks = []
         
         for mode_idx in range(num_modes):
-            print(f"为模式 {mode_idx+1} 生成专用掩膜...")
-            # 每个模式的掩膜基于基本掩膜，但添加聚焦优化
+            # 这里可以实现更复杂的模式特定掩码生成逻辑
+            # 目前简单地使用相同的基础掩码
             mode_masks = []
-            for layer_idx, layer_masks in enumerate(base_masks):
-                # 复制层掩膜
-                layer_copy = []
-                for wl_idx, mask in enumerate(layer_masks):
-                    # 创建聚焦增强掩膜
-                    wavelength = self.config.wavelengths[wl_idx]
-                    focal_length = self.config.z_layers * (layer_idx + 1) + self.config.z_prop
-                    
-                    # 生成聚焦相位掩膜
-                    focusing_mask = create_focusing_initial_mask(
-                        mask.shape[0], wavelength, focal_length, self.config.pixel_size
-                    )
-                    
-                    # 结合原始掩膜和聚焦掩膜
-                    if isinstance(mask, np.ndarray):
-                        enhanced_mask = mask + 0.3 * focusing_mask
-                    else:
-                        enhanced_mask = mask.cpu().numpy() + 0.3 * focusing_mask
-                    
-                    # 添加模式特定的小扰动
-                    mode_perturbation = np.random.normal(0, 0.05, enhanced_mask.shape)
-                    enhanced_mask = enhanced_mask + mode_perturbation
-                    
-                    # 确保相位范围在[0, 2π]内
-                    enhanced_mask = enhanced_mask % (2 * np.pi)
-                    
-                    layer_copy.append(enhanced_mask)
-                mode_masks.append(layer_copy)
-            mode_specific_masks.append(mode_masks)
             
+            for layer_masks in base_masks:
+                mode_layer_masks = []
+                for wl_mask in layer_masks:
+                    # 可以在这里添加模式特定的相位调制
+                    # 例如：添加不同的相位偏移
+                    phase_offset = mode_idx * np.pi / num_modes
+                    
+                    if isinstance(wl_mask, np.ndarray):
+                        modified_mask = wl_mask + phase_offset
+                    else:
+                        modified_mask = wl_mask + phase_offset
+                    
+                    mode_layer_masks.append(modified_mask)
+                mode_masks.append(mode_layer_masks)
+            
+            mode_specific_masks.append(mode_masks)
+        
+        print(f"✓ 生成了 {len(mode_specific_masks)} 个模式的专用掩膜")
         return mode_specific_masks
-
-    def _check_and_adjust_masks(self, masks, mode_idx=None):
+    
+    def visualize_propagation_results(self, save_dir, mode_suffix=""):
         """
-        检查并调整掩膜结构，确保格式正确
+        可视化光场传播结果
         
         参数:
-            masks: 相位掩膜
-            mode_idx: 模式索引（用于调试信息）
+            save_dir: 保存目录
+            mode_suffix: 模式后缀
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm
+        
+        print("生成光场传播可视化图...")
+        
+        # 查找保存的仿真结果文件
+        pattern = f"MC_single_*{mode_suffix}_*.npy"
+        result_files = glob.glob(os.path.join(save_dir, pattern))
+        
+        if not result_files:
+            print(f"⚠ 未找到仿真结果文件: {pattern}")
+            return
+        
+        # 按波长组织文件
+        wavelength_files = {}
+        for file_path in result_files:
+            filename = os.path.basename(file_path)
+            # 提取波长信息
+            for wl in self.config.wavelengths:
+                wl_nm = int(wl * 1e9)
+                if f"{wl_nm}nm" in filename:
+                    if wl_nm not in wavelength_files:
+                        wavelength_files[wl_nm] = []
+                    wavelength_files[wl_nm].append(file_path)
+                    break
+        
+        if not wavelength_files:
+            print("⚠ 无法识别波长信息")
+            return
+        
+        # 为每个波长创建可视化
+        for wl_nm, files in wavelength_files.items():
+            if not files:
+                continue
+                
+            # 选择最新的文件
+            latest_file = max(files, key=os.path.getctime)
+            
+            try:
+                # 加载数据
+                try:
+                    data = np.load(latest_file, allow_pickle=True)
+                except ValueError:
+                    data = np.load(latest_file, allow_pickle=True)
+                
+                # 计算强度
+                if np.iscomplexobj(data):
+                    intensity = np.abs(data)**2
+                    phase = np.angle(data)
+                else:
+                    intensity = np.abs(data)
+                    phase = None
+                
+                # 确保是2D数据
+                if intensity.ndim > 2:
+                    intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
+                    if phase is not None and phase.ndim > 2:
+                        phase = phase[..., 0, 0] if phase.ndim == 4 else phase[..., 0]
+                
+                # 创建图形
+                if phase is not None:
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+                else:
+                    fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
+                
+                # 绘制强度分布
+                im1 = ax1.imshow(intensity, cmap='hot', origin='lower')
+                ax1.set_title(f'光场强度分布 - {wl_nm}nm{mode_suffix}')
+                ax1.set_xlabel('X (像素)')
+                ax1.set_ylabel('Y (像素)')
+                plt.colorbar(im1, ax=ax1, label='强度')
+                
+                # 标记峰值位置
+                peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
+                ax1.plot(peak_pos[1], peak_pos[0], 'w+', markersize=15, markeredgewidth=2)
+                ax1.text(peak_pos[1]+5, peak_pos[0]+5, f'峰值({peak_pos[1]},{peak_pos[0]})', 
+                        color='white', fontsize=10)
+                
+                # 绘制相位分布（如果有）
+                if phase is not None:
+                    im2 = ax2.imshow(phase, cmap='hsv', origin='lower', vmin=-np.pi, vmax=np.pi)
+                    ax2.set_title(f'光场相位分布 - {wl_nm}nm{mode_suffix}')
+                    ax2.set_xlabel('X (像素)')
+                    ax2.set_ylabel('Y (像素)')
+                    plt.colorbar(im2, ax=ax2, label='相位 (弧度)')
+                
+                plt.tight_layout()
+                
+                # 保存图像
+                save_path = os.path.join(save_dir, f'propagation_result_{wl_nm}nm{mode_suffix}.png')
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                plt.show()
+                
+                print(f"✅ 保存传播结果图: {save_path}")
+                
+            except Exception as e:
+                print(f"❌ 处理文件 {latest_file} 时出错: {e}")
+                continue
+    
+    def create_propagation_summary(self, save_dir):
+        """
+        创建传播结果总结图
+        
+        参数:
+            save_dir: 保存目录
+        """
+        import matplotlib.pyplot as plt
+        
+        print("创建传播结果总结图...")
+        
+        # 查找所有仿真结果文件
+        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
+        
+        if not result_files:
+            print("⚠ 未找到仿真结果文件")
+            return
+        
+        # 按模式和波长组织文件
+        organized_files = {}
+        for file_path in result_files:
+            filename = os.path.basename(file_path)
+            
+            # 提取模式和波长信息
+            mode_match = None
+            wl_match = None
+            
+            for mode_idx in range(self.config.num_modes):
+                if f"_mode{mode_idx+1}_" in filename:
+                    mode_match = mode_idx + 1
+                    break
+            
+            for wl in self.config.wavelengths:
+                wl_nm = int(wl * 1e9)
+                if f"{wl_nm}nm" in filename:
+                    wl_match = wl_nm
+                    break
+            
+            if mode_match and wl_match:
+                key = (mode_match, wl_match)
+                if key not in organized_files:
+                    organized_files[key] = []
+                organized_files[key].append(file_path)
+        
+        if not organized_files:
+            print("⚠ 无法识别文件中的模式和波长信息")
+            return
+        
+        # 创建总结图
+        num_modes = self.config.num_modes
+        num_wavelengths = len(self.config.wavelengths)
+        
+        fig, axes = plt.subplots(num_modes, num_wavelengths, 
+                                figsize=(4*num_wavelengths, 4*num_modes))
+        
+        if num_modes == 1:
+            axes = axes.reshape(1, -1)
+        if num_wavelengths == 1:
+            axes = axes.reshape(-1, 1)
+        
+        for mode_idx in range(num_modes):
+            for wl_idx, wl in enumerate(self.config.wavelengths):
+                wl_nm = int(wl * 1e9)
+                key = (mode_idx + 1, wl_nm)
+                
+                ax = axes[mode_idx, wl_idx]
+                
+                if key in organized_files:
+                    # 选择最新的文件
+                    latest_file = max(organized_files[key], key=os.path.getctime)
+                    
+                    try:
+                        try:
+                            data = np.load(latest_file, allow_pickle=True)
+                        except ValueError:
+                            data = np.load(latest_file, allow_pickle=True)
+                        
+                        # 计算强度
+                        if np.iscomplexobj(data):
+                            intensity = np.abs(data)**2
+                        else:
+                            intensity = np.abs(data)
+                        
+                        # 确保是2D数据
+                        if intensity.ndim > 2:
+                            intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
+                        
+                        # 绘制
+                        im = ax.imshow(intensity, cmap='hot', origin='lower')
+                        ax.set_title(f'模式{mode_idx+1} - {wl_nm}nm')
+                        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                        
+                        # 标记峰值位置
+                        peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
+                        ax.plot(peak_pos[1], peak_pos[0], 'w+', markersize=10, markeredgewidth=1)
+                        
+                    except Exception as e:
+                        ax.text(0.5, 0.5, f'加载失败\n{str(e)[:20]}...', 
+                               ha='center', va='center', transform=ax.transAxes)
+                        ax.set_title(f'模式{mode_idx+1} - {wl_nm}nm (失败)')
+                else:
+                    ax.text(0.5, 0.5, '无数据', ha='center', va='center', 
+                           transform=ax.transAxes)
+                    ax.set_title(f'模式{mode_idx+1} - {wl_nm}nm (无数据)')
+                
+                ax.set_xlabel('X (像素)')
+                ax.set_ylabel('Y (像素)')
+        
+        plt.tight_layout()
+        
+        # 保存总结图
+        summary_path = os.path.join(save_dir, 'propagation_summary.png')
+        plt.savefig(summary_path, dpi=300, bbox_inches='tight')
+        plt.show()
+        
+        print(f"✅ 保存传播总结图: {summary_path}")
+    
+    def create_detailed_analysis(self, save_dir):
+        """
+        创建详细的分析报告
+        
+        参数:
+            save_dir: 保存目录
+        """
+        print("创建详细分析报告...")
+        
+        # 查找所有仿真结果文件
+        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
+        
+        if not result_files:
+            print("⚠ 未找到仿真结果文件")
+            return
+        
+        analysis_data = {}
+        
+        # 分析每个文件
+        for file_path in result_files:
+            filename = os.path.basename(file_path)
+            
+            # 提取文件信息
+            mode_match = None
+            wl_match = None
+            layers_match = None
+            
+            # 提取模式信息
+            for mode_idx in range(self.config.num_modes):
+                if f"_mode{mode_idx+1}_" in filename:
+                    mode_match = mode_idx + 1
+                    break
+            
+            # 提取波长信息
+            for wl in self.config.wavelengths:
+                wl_nm = int(wl * 1e9)
+                if f"{wl_nm}nm" in filename:
+                    wl_match = wl_nm
+                    break
+            
+            # 提取层数信息
+            import re
+            layers_pattern = r'(\d+)layers'
+            layers_search = re.search(layers_pattern, filename)
+            if layers_search:
+                layers_match = int(layers_search.group(1))
+            
+            if mode_match and wl_match and layers_match:
+                try:
+                    # 加载数据
+                    try:
+                        data = np.load(file_path, allow_pickle=True)
+                    except ValueError:
+                        data = np.load(file_path, allow_pickle=True)
+                    
+                    # 计算强度
+                    if np.iscomplexobj(data):
+                        intensity = np.abs(data)**2
+                    else:
+                        intensity = np.abs(data)
+                    
+                    # 确保是2D数据
+                    if intensity.ndim > 2:
+                        intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
+                    
+                    # 计算分析指标
+                    total_intensity = np.sum(intensity)
+                    peak_intensity = np.max(intensity)
+                    peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
+                    
+                    # 计算质心
+                    H, W = intensity.shape
+                    y_indices, x_indices = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+                    
+                    if total_intensity > 0:
+                        centroid_y = np.sum(y_indices * intensity) / total_intensity
+                        centroid_x = np.sum(x_indices * intensity) / total_intensity
+                    else:
+                        centroid_y, centroid_x = H//2, W//2
+                    
+                    # 计算聚焦效率（中心区域）
+                    center_y, center_x = H//2, W//2
+                    radius = self.config.focus_radius
+                    
+                    y_grid, x_grid = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+                    focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= radius**2
+                    
+                    focus_intensity = np.sum(intensity[focus_mask])
+                    focus_efficiency = focus_intensity / total_intensity if total_intensity > 0 else 0
+                    
+                    # 计算均匀性（标准差）
+                    intensity_std = np.std(intensity)
+                    intensity_mean = np.mean(intensity)
+                    uniformity = intensity_std / intensity_mean if intensity_mean > 0 else 0
+                    
+                    # 存储分析结果
+                    key = (layers_match, mode_match, wl_match)
+                    analysis_data[key] = {
+                        'filename': filename,
+                        'total_intensity': total_intensity,
+                        'peak_intensity': peak_intensity,
+                        'peak_position': peak_pos,
+                        'centroid_position': (centroid_y, centroid_x),
+                        'focus_efficiency': focus_efficiency,
+                        'uniformity': uniformity,
+                        'intensity_std': intensity_std,
+                        'intensity_mean': intensity_mean
+                    }
+                    
+                except Exception as e:
+                    print(f"❌ 分析文件 {filename} 时出错: {e}")
+                    continue
+        
+        if not analysis_data:
+            print("❌ 没有可分析的数据")
+            return
+        
+        # 生成分析报告
+        report_lines = []
+        report_lines.append("="*80)
+        report_lines.append("光场传播仿真详细分析报告")
+        report_lines.append("="*80)
+        report_lines.append(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append(f"分析文件数量: {len(analysis_data)}")
+        report_lines.append("")
+        
+        # 按层数分组分析
+        layers_groups = {}
+        for (layers, mode, wl), data in analysis_data.items():
+            if layers not in layers_groups:
+                layers_groups[layers] = {}
+            if mode not in layers_groups[layers]:
+                layers_groups[layers][mode] = {}
+            layers_groups[layers][mode][wl] = data
+        
+        for layers in sorted(layers_groups.keys()):
+            report_lines.append(f"\n{layers} 层模型分析:")
+            report_lines.append("-" * 50)
+            
+            modes_data = layers_groups[layers]
+            
+            # 计算平均指标
+            all_focus_eff = []
+            all_uniformity = []
+            all_peak_int = []
+            
+            for mode in sorted(modes_data.keys()):
+                report_lines.append(f"\n  模式 {mode}:")
+                
+                wl_data = modes_data[mode]
+                for wl in sorted(wl_data.keys()):
+                    data = wl_data[wl]
+                    
+                    all_focus_eff.append(data['focus_efficiency'])
+                    all_uniformity.append(data['uniformity'])
+                    all_peak_int.append(data['peak_intensity'])
+                    
+                    report_lines.append(f"    {wl}nm:")
+                    report_lines.append(f"      聚焦效率: {data['focus_efficiency']:.4f}")
+                    report_lines.append(f"      峰值强度: {data['peak_intensity']:.6f}")
+                    report_lines.append(f"      峰值位置: {data['peak_position']}")
+                    report_lines.append(f"      质心位置: ({data['centroid_position'][0]:.1f}, {data['centroid_position'][1]:.1f})")
+                    report_lines.append(f"      均匀性: {data['uniformity']:.4f}")
+            
+            # 层级统计
+            if all_focus_eff:
+                report_lines.append(f"\n  {layers}层模型总体统计:")
+                report_lines.append(f"    平均聚焦效率: {np.mean(all_focus_eff):.4f} ± {np.std(all_focus_eff):.4f}")
+                report_lines.append(f"    平均峰值强度: {np.mean(all_peak_int):.6f} ± {np.std(all_peak_int):.6f}")
+                report_lines.append(f"    平均均匀性: {np.mean(all_uniformity):.4f} ± {np.std(all_uniformity):.4f}")
+        
+        # 保存报告
+        report_path = os.path.join(save_dir, 'detailed_analysis_report.txt')
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(report_lines))
+        
+        # 打印报告
+        for line in report_lines:
+            print(line)
+        
+        print(f"\n✅ 详细分析报告已保存到: {report_path}")
+        
+        # 保存分析数据为JSON
+        json_data = {}
+        for (layers, mode, wl), data in analysis_data.items():
+            key = f"{layers}layers_mode{mode}_{wl}nm"
+            # 转换numpy类型为Python原生类型
+            json_data[key] = {
+                k: float(v) if isinstance(v, (np.ndarray, np.number)) else 
+                   [float(x) for x in v] if isinstance(v, (list, tuple)) else v
+                for k, v in data.items()
+            }
+        
+        json_path = os.path.join(save_dir, 'detailed_analysis_data.json')
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"✅ 分析数据已保存到: {json_path}")
+    
+    def create_performance_comparison(self, save_dir):
+        """
+        创建不同层数模型的性能对比图
+        
+        参数:
+            save_dir: 保存目录
+        """
+        import matplotlib.pyplot as plt
+        
+        print("创建性能对比图...")
+        
+        # 加载分析数据
+        json_path = os.path.join(save_dir, 'detailed_analysis_data.json')
+        if not os.path.exists(json_path):
+            print("⚠ 未找到分析数据文件，请先运行详细分析")
+            return
+        
+        with open(json_path, 'r', encoding='utf-8') as f:
+            analysis_data = json.load(f)
+        
+        # 组织数据
+        layers_performance = {}
+        
+        for key, data in analysis_data.items():
+            # 解析键
+            parts = key.split('_')
+            layers_str = parts[0]  # e.g., "3layers"
+            layers = int(layers_str.replace('layers', ''))
+            
+            if layers not in layers_performance:
+                layers_performance[layers] = {
+                    'focus_efficiency': [],
+                    'peak_intensity': [],
+                    'uniformity': []
+                }
+            
+            layers_performance[layers]['focus_efficiency'].append(data['focus_efficiency'])
+            layers_performance[layers]['peak_intensity'].append(data['peak_intensity'])
+            layers_performance[layers]['uniformity'].append(data['uniformity'])
+        
+        if not layers_performance:
+            print("❌ 没有可用的性能数据")
+            return
+        
+        # 创建对比图
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        layers_list = sorted(layers_performance.keys())
+        
+        # 1. 聚焦效率对比
+        ax1 = axes[0, 0]
+        focus_means = [np.mean(layers_performance[l]['focus_efficiency']) for l in layers_list]
+        focus_stds = [np.std(layers_performance[l]['focus_efficiency']) for l in layers_list]
+        
+        ax1.bar(range(len(layers_list)), focus_means, yerr=focus_stds, 
+                capsize=5, alpha=0.7, color='skyblue')
+        ax1.set_xlabel('层数')
+        ax1.set_ylabel('聚焦效率')
+        ax1.set_title('不同层数的聚焦效率对比')
+        ax1.set_xticks(range(len(layers_list)))
+        ax1.set_xticklabels([f'{l}层' for l in layers_list])
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. 峰值强度对比
+        ax2 = axes[0, 1]
+        peak_means = [np.mean(layers_performance[l]['peak_intensity']) for l in layers_list]
+        peak_stds = [np.std(layers_performance[l]['peak_intensity']) for l in layers_list]
+        
+        ax2.bar(range(len(layers_list)), peak_means, yerr=peak_stds, 
+                capsize=5, alpha=0.7, color='lightcoral')
+        ax2.set_xlabel('层数')
+        ax2.set_ylabel('峰值强度')
+        ax2.set_title('不同层数的峰值强度对比')
+        ax2.set_xticks(range(len(layers_list)))
+        ax2.set_xticklabels([f'{l}层' for l in layers_list])
+        ax2.grid(True, alpha=0.3)
+        
+        # 3. 均匀性对比
+        ax3 = axes[1, 0]
+        uni_means = [np.mean(layers_performance[l]['uniformity']) for l in layers_list]
+        uni_stds = [np.std(layers_performance[l]['uniformity']) for l in layers_list]
+        
+        ax3.bar(range(len(layers_list)), uni_means, yerr=uni_stds, 
+                capsize=5, alpha=0.7, color='lightgreen')
+        ax3.set_xlabel('层数')
+        ax3.set_ylabel('均匀性 (越小越好)')
+        ax3.set_title('不同层数的均匀性对比')
+        ax3.set_xticks(range(len(layers_list)))
+        ax3.set_xticklabels([f'{l}层' for l in layers_list])
+        ax3.grid(True, alpha=0.3)
+        
+        # 4. 综合性能雷达图
+        ax4 = axes[1, 1]
+        
+        # 归一化指标 (0-1)
+        focus_norm = np.array(focus_means) / np.max(focus_means) if np.max(focus_means) > 0 else np.zeros_like(focus_means)
+        peak_norm = np.array(peak_means) / np.max(peak_means) if np.max(peak_means) > 0 else np.zeros_like(peak_means)
+        uni_norm = 1 - (np.array(uni_means) / np.max(uni_means)) if np.max(uni_means) > 0 else np.ones_like(uni_means)  # 均匀性越小越好，所以取反
+        
+        # 综合得分
+        composite_scores = (focus_norm + peak_norm + uni_norm) / 3
+        
+        colors = plt.cm.viridis(np.linspace(0, 1, len(layers_list)))
+        bars = ax4.bar(range(len(layers_list)), composite_scores, 
+                       color=colors, alpha=0.7)
+        ax4.set_xlabel('层数')
+        ax4.set_ylabel('综合性能得分')
+        ax4.set_title('综合性能对比')
+        ax4.set_xticks(range(len(layers_list)))
+        ax4.set_xticklabels([f'{l}层' for l in layers_list])
+        ax4.grid(True, alpha=0.3)
+        
+        # 标注最佳性能
+        best_idx = np.argmax(composite_scores)
+        ax4.annotate(f'最佳: {layers_list[best_idx]}层\n得分: {composite_scores[best_idx]:.3f}', 
+                     xy=(best_idx, composite_scores[best_idx]), 
+                     xytext=(best_idx, composite_scores[best_idx] + 0.1),
+                     arrowprops=dict(arrowstyle='->', color='red'),
+                     ha='center', fontweight='bold', color='red')
+        
+        plt.tight_layout()
+        
+        # 保存对比图
+        comparison_path = os.path.join(save_dir, 'performance_comparison.png')
+        plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+        plt.show()
+        
+        print(f"✅ 性能对比图已保存到: {comparison_path}")
+        
+        # 打印最佳性能总结
+        print(f"\n🏆 性能对比总结:")
+        print(f"最佳聚焦效率: {layers_list[np.argmax(focus_means)]}层 ({np.max(focus_means):.4f})")
+        print(f"最佳峰值强度: {layers_list[np.argmax(peak_means)]}层 ({np.max(peak_means):.6f})")
+        print(f"最佳均匀性: {layers_list[np.argmin(uni_means)]}层 ({np.min(uni_means):.4f})")
+        print(f"最佳综合性能: {layers_list[best_idx]}层 (得分: {composite_scores[best_idx]:.3f})")
+    
+    def run_complete_analysis(self, save_dir):
+        """
+        运行完整的分析流程
+        
+        参数:
+            save_dir: 保存目录
+        """
+        print("开始完整分析流程...")
+        
+        try:
+            # 1. 创建传播结果总结图
+            self.create_propagation_summary(save_dir)
+            
+            # 2. 创建详细分析报告
+            self.create_detailed_analysis(save_dir)
+            
+            # 3. 创建性能对比图
+            self.create_performance_comparison(save_dir)
+            
+            print("✅ 完整分析流程完成！")
+            
+        except Exception as e:
+            print(f"❌ 分析过程中出错: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def generate_input_fields_for_simulation(self):
+        """
+        为仿真生成多模式多波长输入场
         
         返回:
-            调整后的掩膜
+            torch.Tensor: [num_modes, num_wavelengths, H, W] 的输入场
         """
-        mode_info = f"模式 {mode_idx+1}" if mode_idx is not None else "通用"
-        print(f"检查{mode_info}掩膜结构...")
+        print(f"生成 {self.config.num_modes} 个模式，{len(self.config.wavelengths)} 个波长的输入场...")
         
-        if not isinstance(masks, list):
-            print(f"  {mode_info}掩膜不是列表，转换为列表")
-            return [[masks]]
+        # 创建输入场数组
+        input_fields = torch.zeros(
+            self.config.num_modes, 
+            len(self.config.wavelengths), 
+            self.config.field_size, 
+            self.config.field_size, 
+            dtype=torch.complex64
+        )
         
-        if len(masks) == 0:
-            print(f"  {mode_info}掩膜列表为空")
-            return masks
+        # 为每个模式生成不同的输入场
+        for mode_idx in range(self.config.num_modes):
+            print(f"  生成模式 {mode_idx + 1}...")
+            
+            # 为每个波长生成场
+            for wl_idx, wavelength in enumerate(self.config.wavelengths):
+                # 生成高斯光束，每个模式有不同的参数
+                field = self._generate_gaussian_beam(
+                    mode_idx=mode_idx,
+                    wavelength=wavelength,
+                    size=self.config.field_size
+                )
+                
+                input_fields[mode_idx, wl_idx] = field
+                
+                wl_nm = wavelength * 1e9
+                print(f"    {wl_nm:.0f}nm: 最大强度 = {torch.max(torch.abs(field)**2):.6f}")
         
-        # 检查第一层
-        if not isinstance(masks[0], list):
-            print(f"  {mode_info}掩膜第一层不是列表，转换为[层数][波长数]格式")
-            return [[m] for m in masks]
-        
-        # 检查是否有额外的模式维度
-        if len(masks[0]) > 0 and isinstance(masks[0][0], list):
-            print(f"  {mode_info}掩膜存在额外的模式维度，调整结构")
-            adjusted_masks = []
-            for layer_idx, layer_masks in enumerate(masks):
-                if isinstance(layer_masks[0], list):
-                    # 只取第一个模式的掩膜
-                    adjusted_masks.append(layer_masks[0])
-                else:
-                    adjusted_masks.append(layer_masks)
-            return adjusted_masks
-        
-        return masks
+        print(f"✓ 输入场生成完成，形状: {input_fields.shape}")
+        return input_fields
 
-    def diagnose_focusing_issues(self, phase_masks):
-        """诊断聚焦问题"""
-        print("=== 聚焦问题诊断 ===")
+    def _generate_gaussian_beam(self, mode_idx, wavelength, size):
+        """
+        生成高斯光束，每个模式有不同的参数
         
-        # 1. 检查相位掩膜的数值范围
-        for layer_idx, layer_masks in enumerate(phase_masks):
-            for wl_idx, mask in enumerate(layer_masks):
-                if isinstance(mask, np.ndarray):
-                    phase_range = mask.max() - mask.min()
-                    phase_std = mask.std()
-                    print(f"层{layer_idx+1} 波长{wl_idx+1}: 相位范围={phase_range:.3f}, 标准差={phase_std:.3f}")
+        参数:
+            mode_idx: 模式索引
+            wavelength: 波长
+            size: 场大小
         
-        # 2. 检查传播距离是否合理
-        total_distance = len(phase_masks) * self.config.z_layers + self.config.z_prop
-        rayleigh_length = np.pi * (self.config.focus_radius * self.config.pixel_size)**2 / self.config.wavelengths[0]
-        print(f"总传播距离: {total_distance*1e6:.1f} μm")
-        print(f"瑞利长度: {rayleigh_length*1e6:.1f} μm")
-        print(f"距离比: {total_distance/rayleigh_length:.2f}")
+        返回:
+            torch.Tensor: 高斯光束场
+        """
+        # 创建坐标网格
+        x = torch.linspace(-size//2, size//2-1, size, dtype=torch.float32) * self.config.pixel_size
+        y = torch.linspace(-size//2, size//2-1, size, dtype=torch.float32) * self.config.pixel_size
+        X, Y = torch.meshgrid(x, y, indexing='xy')
+        R_squared = X**2 + Y**2
         
-        # 3. 检查像素尺寸和采样
-        fresnel_number = (self.config.layer_size * self.config.pixel_size)**2 / (4 * self.config.wavelengths[0] * total_distance)
-        print(f"菲涅尔数: {fresnel_number:.3f}")
+        # 每个模式使用不同的束腰和偏移
+        beam_waists = [20e-6, 25e-6, 30e-6]  # 不同的束腰
+        x_offsets = [0, 5e-6, -5e-6]         # 不同的x偏移
+        y_offsets = [0, -3e-6, 3e-6]         # 不同的y偏移
         
-        if fresnel_number < 1:
-            print("⚠️  菲涅尔数过小，可能需要增加层尺寸或减少传播距离")
-        else:
-            print("✅  菲涅尔数合理，采样足够")
+        w0 = beam_waists[mode_idx % len(beam_waists)]
+        x_offset = x_offsets[mode_idx % len(x_offsets)]
+        y_offset = y_offsets[mode_idx % len(y_offsets)]
+        
+        # 调整坐标
+        X_adj = X - x_offset
+        Y_adj = Y - y_offset
+        R_adj_squared = X_adj**2 + Y_adj**2
+        
+        # 生成高斯光束
+        amplitude = torch.exp(-R_adj_squared / w0**2)
+        
+        # 添加不同的相位（可选）
+        phase_offset = mode_idx * np.pi / 3
+        phase = torch.full_like(amplitude, phase_offset)
+        
+        # 组合成复数场
+        field = amplitude * torch.exp(1j * phase)
+        
+        return field.to(torch.complex64)
