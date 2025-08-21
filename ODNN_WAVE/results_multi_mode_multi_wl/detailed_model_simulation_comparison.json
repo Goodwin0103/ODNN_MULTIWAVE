@@ -1,0 +1,49 @@
+{
+  "summary": {
+    "best_correlation": {
+      "layers": 1,
+      "value": -0.7487380542294764,
+      "data_points": 9
+    },
+    "best_rmse": {
+      "layers": 1,
+      "value": 4.689378431846782
+    },
+    "best_mae": {
+      "layers": 1,
+      "value": 2.9087232450644174
+    }
+  },
+  "detailed_results": {
+    "1_layers": {
+      "correlation": -0.7487380542294764,
+      "rmse": 4.689378431846782,
+      "mae": 2.9087232450644174,
+      "data_length": 9
+    },
+    "2_layers": {
+      "correlation": -0.721417340399381,
+      "rmse": 8.910857672444163,
+      "mae": 3.9598677497771053,
+      "data_length": 9
+    },
+    "3_layers": {
+      "correlation": 0.21023069769528702,
+      "rmse": 11.842235988820928,
+      "mae": 4.6016279177533255,
+      "data_length": 9
+    },
+    "4_layers": {
+      "correlation": 0.09323165589979078,
+      "rmse": 13.084057778491415,
+      "mae": 4.799707197480732,
+      "data_length": 9
+    },
+    "5_layers": {
+      "correlation": 0.12574047155691792,
+      "rmse": 15.48054189170491,
+      "mae": 5.53810382137696,
+      "data_length": 9
+    }
+  }
+}

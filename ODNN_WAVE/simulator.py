@@ -714,14 +714,12 @@ class Simulator:
     
     def create_propagation_summary(self, save_dir):
         """
-        Create a summary figure of propagation results
-        
-        参数:
-            save_dir: 保存目录
+        Create summary figures for each model (by layers)
         """
         import matplotlib.pyplot as plt
+        import re
         
-        print("Creating propagation summary diagram...")
+        print("创建不同层数的传播结果汇总图...")
         
         # 查找所有仿真结果文件
         result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
@@ -730,108 +728,207 @@ class Simulator:
             print("⚠ 未找到仿真结果文件")
             return
         
-        # 按模式和波长组织文件
-        organized_files = {}
+        print(f"找到 {len(result_files)} 个仿真结果文件")
+        
+        # 按层数组织文件
+        organized_by_layers = {}
+        
         for file_path in result_files:
             filename = os.path.basename(file_path)
+            print(f"处理文件: {filename}")
+            
+            # **改进的层数提取方法**
+            layers_match = None
+            
+            # 方法1: 寻找 "Xlayers" 模式
+            layers_pattern = r'(\d+)layers'
+            layers_search = re.search(layers_pattern, filename)
+            if layers_search:
+                layers_match = int(layers_search.group(1))
+                print(f"  通过正则表达式找到层数: {layers_match}")
+            else:
+                # 方法2: 如果没有找到，尝试从其他模式推断
+                # 检查常见的层数值
+                for possible_layers in [1, 2, 3, 4, 5, 6, 7, 8]:
+                    if f"_{possible_layers}layers_" in filename or f"_{possible_layers}layer_" in filename:
+                        layers_match = possible_layers
+                        print(f"  通过字符串匹配找到层数: {layers_match}")
+                        break
+            
+            if not layers_match:
+                # 方法3: 如果仍然没有找到，尝试从文件名的其他部分推断
+                print(f"  ⚠ 无法从文件名提取层数信息: {filename}")
+                # 可以设置默认值或跳过
+                layers_match = 1  # 默认为1层
+                print(f"  使用默认层数: {layers_match}")
             
             # 提取模式和波长信息
             mode_match = None
             wl_match = None
             
-            for mode_idx in range(self.config.num_modes):
-                if f"_mode{mode_idx+1}_" in filename:
-                    mode_match = mode_idx + 1
-                    break
+            # 提取模式
+            mode_pattern = r'mode(\d+)'
+            mode_search = re.search(mode_pattern, filename)
+            if mode_search:
+                mode_match = int(mode_search.group(1))
             
-            for wl in self.config.wavelengths:
-                wl_nm = int(wl * 1e9)
-                if f"{wl_nm}nm" in filename:
-                    wl_match = wl_nm
-                    break
+            # 提取波长
+            wl_pattern = r'(\d+)nm'
+            wl_search = re.search(wl_pattern, filename)
+            if wl_search:
+                wl_match = int(wl_search.group(1))
             
-            if mode_match and wl_match:
+            print(f"  提取信息 - 层数: {layers_match}, 模式: {mode_match}, 波长: {wl_match}nm")
+            
+            if mode_match and wl_match and layers_match:
+                if layers_match not in organized_by_layers:
+                    organized_by_layers[layers_match] = {}
+                
                 key = (mode_match, wl_match)
-                if key not in organized_files:
-                    organized_files[key] = []
-                organized_files[key].append(file_path)
+                organized_by_layers[layers_match][key] = file_path
+                print(f"  ✓ 已分类到 {layers_match} 层")
+            else:
+                print(f"  ❌ 跳过文件 (信息不完整)")
         
-        if not organized_files:
-            print("⚠ 无法识别文件中的模式和波长信息")
+        print(f"\n按层数组织的结果:")
+        for layers, files_dict in organized_by_layers.items():
+            print(f"  {layers}层: {len(files_dict)} 个文件")
+        
+        if not organized_by_layers:
+            print("❌ 没有找到可以按层数分类的文件")
             return
         
-        # 创建总结图
+        # 为每个层数创建单独的总结图
+        for layers in sorted(organized_by_layers.keys()):
+            files_dict = organized_by_layers[layers]
+            print(f"\n创建 {layers} 层模型的汇总图...")
+            self.create_single_layer_summary(layers, files_dict, save_dir)
+
+    def create_single_layer_summary(self, layers, files_dict, save_dir):
+        """Create a summary figure for a single layer model."""
+        import matplotlib.pyplot as plt
+        
+        print(f"Creating summary for {layers}-layer model, containing {len(files_dict)} result(s)...")
+        
         num_modes = self.config.num_modes
         num_wavelengths = len(self.config.wavelengths)
         
+        # Create subplots
         fig, axes = plt.subplots(num_modes, num_wavelengths, 
-                                figsize=(4*num_wavelengths, 4*num_modes))
+                                figsize=(5*num_wavelengths, 4*num_modes))
         
-        if num_modes == 1:
+        # Handle cases with a single row or single column
+        if num_modes == 1 and num_wavelengths == 1:
+            axes = np.array([[axes]])
+        elif num_modes == 1:
             axes = axes.reshape(1, -1)
-        if num_wavelengths == 1:
+        elif num_wavelengths == 1:
             axes = axes.reshape(-1, 1)
+        
+        fig.suptitle(f'{layers}-Layer Model - Propagation Results Summary', fontsize=16, fontweight='bold')
+        
+        # Counter for successfully loaded files
+        successful_loads = 0
         
         for mode_idx in range(num_modes):
             for wl_idx, wl in enumerate(self.config.wavelengths):
                 wl_nm = int(wl * 1e9)
-                key = (mode_idx + 1, wl_nm)
+                key = (mode_idx + 1, wl_nm)  # Mode numbering starts at 1
                 
-                ax = axes[mode_idx, wl_idx]
+                if num_modes == 1 and num_wavelengths == 1:
+                    ax = axes[0, 0]
+                else:
+                    ax = axes[mode_idx, wl_idx]
                 
-                if key in organized_files:
-                    # 选择最新的文件
-                    latest_file = max(organized_files[key], key=os.path.getctime)
+                if key in files_dict:
+                    file_path = files_dict[key]
+                    filename = os.path.basename(file_path)
                     
                     try:
-                        # 加载数据
-                        try:
-                            data = np.load(latest_file, allow_pickle=True)
-                        except ValueError:
-                            data = np.load(latest_file, allow_pickle=True)
+                        # Load and display data
+                        print(f"  Loading file: {filename}")
+                        data = np.load(file_path, allow_pickle=True)
                         
-                        # 计算强度
+                        # Compute intensity
                         if np.iscomplexobj(data):
                             intensity = np.abs(data)**2
                         else:
-                            intensity = np.abs(data)
+                            intensity = np.abs(data)**2
                         
-                        # 确保是2D数据
+                        # Process multi-dimensional data
                         if intensity.ndim > 2:
-                            intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
+                            print(f"    Data dimensions: {intensity.shape}, reducing dimensions...")
+                            # Use the last two dimensions as spatial dimensions
+                            intensity = intensity.reshape(-1, intensity.shape[-2], intensity.shape[-1])
+                            intensity = np.sum(intensity, axis=0)  # Sum over other dimensions
                         
-                        # 绘制
-                        im = ax.imshow(intensity, cmap='hot', origin='lower')
-                        ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm')
-                        ax.set_xlabel('X (pixels)')
-                        ax.set_ylabel('Y (pixels)')
-                        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                        # Normalize
+                        if np.max(intensity) > 0:
+                            intensity = intensity / np.max(intensity)
                         
-                        # 标记峰值位置
+                        # Display intensity distribution
+                        im = ax.imshow(intensity, cmap='hot', origin='lower', aspect='equal')
+                        ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm', fontsize=12)
+                        
+                        # Add colorbar
+                        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, shrink=0.8)
+                        
+                        # Mark peak position
                         peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
-                        ax.plot(peak_pos[1], peak_pos[0], 'w+', markersize=10, markeredgewidth=1)
+                        ax.plot(peak_pos[1], peak_pos[0], 'w+', markersize=12, markeredgewidth=2)
+                        
+                        # Add performance metric text
+                        peak_intensity = np.max(intensity)
+                        total_intensity = np.sum(intensity)
+                        
+                        # Calculate focus ratio
+                        center_y, center_x = intensity.shape[0] // 2, intensity.shape[1] // 2
+                        radius = min(intensity.shape) // 8  # Focus region radius
+                        y_grid, x_grid = np.meshgrid(np.arange(intensity.shape[0]), 
+                                                np.arange(intensity.shape[1]), indexing='ij')
+                        focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= radius**2
+                        focus_ratio = np.sum(intensity[focus_mask]) / total_intensity if total_intensity > 0 else 0
+                        
+                        # Display metrics on the plot
+                        ax.text(0.02, 0.98, f'Peak: {peak_intensity:.3f}\nFocus: {focus_ratio:.3f}', 
+                            transform=ax.transAxes, fontsize=10, 
+                            verticalalignment='top', color='white',
+                            bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
+                        
+                        successful_loads += 1
+                        print(f"    ✓ Loaded and displayed successfully")
                         
                     except Exception as e:
-                        ax.text(0.5, 0.5, f'加载失败\n{str(e)[:20]}...', 
-                               ha='center', va='center', transform=ax.transAxes)
-                        ax.set_title(f'模式{mode_idx+1} - {wl_nm}nm (失败)')
+                        print(f"    ❌ Load failed: {e}")
+                        ax.text(0.5, 0.5, f'Load failed\n{str(e)[:30]}...', 
+                            ha='center', va='center', transform=ax.transAxes,
+                            fontsize=10, color='red')
+                        ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm (failed)', fontsize=12, color='red')
                 else:
-                    ax.text(0.5, 0.5, '无数据', ha='center', va='center', 
-                           transform=ax.transAxes)
-                    ax.set_title(f'模式{mode_idx+1} - {wl_nm}nm (无数据)')
+                    print(f"  ❌ Data not found: Mode {mode_idx+1}, {wl_nm}nm")
+                    ax.text(0.5, 0.5, 'No Data', ha='center', va='center', 
+                        transform=ax.transAxes, fontsize=14, color='gray')
+                    ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm (No Data)', fontsize=12, color='gray')
                 
-                ax.set_xlabel('X (像素)')
-                ax.set_ylabel('Y (像素)')
+                # Set axis labels
+                ax.set_xlabel('X (pixels)', fontsize=10)
+                ax.set_ylabel('Y (pixels)', fontsize=10)
+                
+                # 移除坐标轴刻度以节省空间
+                ax.tick_params(labelsize=8)
         
+        # 调整布局
         plt.tight_layout()
+        plt.subplots_adjust(top=0.93)  # 为标题留出空间
         
-        # 保存总结图
-        summary_path = os.path.join(save_dir, 'propagation_summary.png')
-        plt.savefig(summary_path, dpi=300, bbox_inches='tight')
+        # 保存该层数的总结图
+        summary_path = os.path.join(save_dir, f'{layers}_layers_propagation_summary.png')
+        plt.savefig(summary_path, dpi=300, bbox_inches='tight', facecolor='white')
         plt.show()
         
-        print(f"✅ 保存传播总结图: {summary_path}")
-    
+        print(f"✅ {layers} 层模型汇总图已保存: {summary_path}")
+        print(f"   成功加载 {successful_loads}/{len(files_dict)} 个文件")
+
     def create_detailed_analysis(self, save_dir):
         """
         创建详细的分析报告
