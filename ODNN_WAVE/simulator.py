@@ -607,7 +607,7 @@ class Simulator:
     
     def visualize_propagation_results(self, save_dir, mode_suffix=""):
         """
-        可视化光场传播结果
+        Visualize propagation results
         
         参数:
             save_dir: 保存目录
@@ -616,7 +616,7 @@ class Simulator:
         import matplotlib.pyplot as plt
         from matplotlib.colors import LogNorm
         
-        print("生成光场传播可视化图...")
+        print("Generating propagation visualization images...")
         
         # 查找保存的仿真结果文件
         pattern = f"MC_single_*{mode_suffix}_*.npy"
@@ -680,10 +680,10 @@ class Simulator:
                 
                 # 绘制强度分布
                 im1 = ax1.imshow(intensity, cmap='hot', origin='lower')
-                ax1.set_title(f'光场强度分布 - {wl_nm}nm{mode_suffix}')
-                ax1.set_xlabel('X (像素)')
-                ax1.set_ylabel('Y (像素)')
-                plt.colorbar(im1, ax=ax1, label='强度')
+                ax1.set_title(f'Field Intensity Distribution - {wl_nm}nm{mode_suffix}')
+                ax1.set_xlabel('X (pixels)')
+                ax1.set_ylabel('Y (pixels)')
+                plt.colorbar(im1, ax=ax1, label='Intensity')
                 
                 # 标记峰值位置
                 peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
@@ -694,10 +694,10 @@ class Simulator:
                 # 绘制相位分布（如果有）
                 if phase is not None:
                     im2 = ax2.imshow(phase, cmap='hsv', origin='lower', vmin=-np.pi, vmax=np.pi)
-                    ax2.set_title(f'光场相位分布 - {wl_nm}nm{mode_suffix}')
-                    ax2.set_xlabel('X (像素)')
-                    ax2.set_ylabel('Y (像素)')
-                    plt.colorbar(im2, ax=ax2, label='相位 (弧度)')
+                    ax2.set_title(f'Field Phase Distribution - {wl_nm}nm{mode_suffix}')
+                    ax2.set_xlabel('X (pixels)')
+                    ax2.set_ylabel('Y (pixels)')
+                    plt.colorbar(im2, ax=ax2, label='Phase (radians)')
                 
                 plt.tight_layout()
                 
@@ -714,14 +714,14 @@ class Simulator:
     
     def create_propagation_summary(self, save_dir):
         """
-        创建传播结果总结图
+        Create a summary figure of propagation results
         
         参数:
             save_dir: 保存目录
         """
         import matplotlib.pyplot as plt
         
-        print("创建传播结果总结图...")
+        print("Creating propagation summary diagram...")
         
         # 查找所有仿真结果文件
         result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
@@ -784,6 +784,7 @@ class Simulator:
                     latest_file = max(organized_files[key], key=os.path.getctime)
                     
                     try:
+                        # 加载数据
                         try:
                             data = np.load(latest_file, allow_pickle=True)
                         except ValueError:
@@ -801,7 +802,9 @@ class Simulator:
                         
                         # 绘制
                         im = ax.imshow(intensity, cmap='hot', origin='lower')
-                        ax.set_title(f'模式{mode_idx+1} - {wl_nm}nm')
+                        ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm')
+                        ax.set_xlabel('X (pixels)')
+                        ax.set_ylabel('Y (pixels)')
                         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                         
                         # 标记峰值位置
@@ -1030,7 +1033,7 @@ class Simulator:
     
     def create_performance_comparison(self, save_dir):
         """
-        创建不同层数模型的性能对比图
+        Create performance comparison figures for different layer models
         
         参数:
             save_dir: 保存目录
@@ -1086,7 +1089,7 @@ class Simulator:
                 capsize=5, alpha=0.7, color='skyblue')
         ax1.set_xlabel('层数')
         ax1.set_ylabel('聚焦效率')
-        ax1.set_title('不同层数的聚焦效率对比')
+        ax1.set_title('Focusing Efficiency Comparison across Layers')
         ax1.set_xticks(range(len(layers_list)))
         ax1.set_xticklabels([f'{l}层' for l in layers_list])
         ax1.grid(True, alpha=0.3)
@@ -1100,7 +1103,7 @@ class Simulator:
                 capsize=5, alpha=0.7, color='lightcoral')
         ax2.set_xlabel('层数')
         ax2.set_ylabel('峰值强度')
-        ax2.set_title('不同层数的峰值强度对比')
+        ax2.set_title('Peak Intensity Comparison across Layers')
         ax2.set_xticks(range(len(layers_list)))
         ax2.set_xticklabels([f'{l}层' for l in layers_list])
         ax2.grid(True, alpha=0.3)
@@ -1114,7 +1117,7 @@ class Simulator:
                 capsize=5, alpha=0.7, color='lightgreen')
         ax3.set_xlabel('层数')
         ax3.set_ylabel('均匀性 (越小越好)')
-        ax3.set_title('不同层数的均匀性对比')
+        ax3.set_title('Uniformity Comparison across Layers')
         ax3.set_xticks(range(len(layers_list)))
         ax3.set_xticklabels([f'{l}层' for l in layers_list])
         ax3.grid(True, alpha=0.3)
@@ -1135,7 +1138,7 @@ class Simulator:
                        color=colors, alpha=0.7)
         ax4.set_xlabel('层数')
         ax4.set_ylabel('综合性能得分')
-        ax4.set_title('综合性能对比')
+        ax4.set_title('Overall Performance Comparison')
         ax4.set_xticks(range(len(layers_list)))
         ax4.set_xticklabels([f'{l}层' for l in layers_list])
         ax4.grid(True, alpha=0.3)

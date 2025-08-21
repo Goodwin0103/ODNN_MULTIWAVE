@@ -1072,8 +1072,8 @@ class Visualizer:
         return fig
 
     def plot_propagation_comparison(self, all_propagation_results, save_path=None):
-        """绘制所有模型的传播仿真对比图"""
-        print("🎨 绘制传播仿真对比图...")
+        """Plot propagation simulation comparison for all models"""
+        print("🎨 Plotting propagation simulation comparison...")
         
         num_models = len(all_propagation_results)
         num_wavelengths = len(self.config.wavelengths)
@@ -1090,14 +1090,14 @@ class Visualizer:
             for wl_idx, (wl_key, wl_data) in enumerate(model_data['propagation_results'].items()):
                 ax = axes[model_idx, wl_idx]
                 
-                # 绘制最终场分布
+                # Draw final field distribution and compute intensity
                 final_field = wl_data['propagation_result']['fields'][-1]
                 intensity = np.abs(final_field)**2
                 
                 im = ax.imshow(intensity, extent=[-self.Lx/2, self.Lx/2, -self.Ly/2, self.Ly/2],
-                            cmap='hot', aspect='equal')
+                               cmap='hot', aspect='equal')
                 
-                ax.set_title(f'{model_key} - {wl_key}\nVis={wl_data["coupling_analysis"]["visibility"]:.3f}')
+                ax.set_title(f'{model_key} - {wl_key}\nVisibility: {wl_data["coupling_analysis"]["visibility"]:.3f}')
                 ax.set_xlabel('x (μm)')
                 ax.set_ylabel('y (μm)')
                 
