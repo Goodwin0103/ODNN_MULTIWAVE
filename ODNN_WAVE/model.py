@@ -523,3 +523,4 @@ class MultiModeMultiWavelengthModel(nn.Module):
                 print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
             # else:
                 # plt.show()
+            plt.close()

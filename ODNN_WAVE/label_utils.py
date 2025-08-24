@@ -87,7 +87,7 @@ def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize):
     # 显示评估区域图像
     plt.figure(figsize=(8, 8))
     plt.imshow(output_image, cmap='gray')
-    plt.title('评估区域: 模式-波长组合')
+    plt.title('evaluation regions for 3 modes and 3 wavelengths')
     plt.axis('off')
     plt.show()
     
@@ -159,7 +159,7 @@ def evaluate_all_regions(output, evaluation_regions):
     return energies
 
 def visualize_labels(labels, wavelengths):
-    """
+    """generate_input_fields
     可视化多模式多波长的标签图像
     
     参数:
@@ -174,7 +174,7 @@ def visualize_labels(labels, wavelengths):
         for wl_idx in range(num_wl):
             plt.subplot(num_modes, num_wl, mode_idx*num_wl + wl_idx + 1)
             plt.imshow(labels[mode_idx, wl_idx], cmap='viridis')
-            plt.title(f'模式 {mode_idx}, λ={int(wavelengths[wl_idx]*1e9)}nm')
+            plt.title(f'MODE {mode_idx+1}, λ={int(wavelengths[wl_idx]*1e9)}nm')
             plt.axis('off')
     plt.tight_layout()
     plt.show()
