@@ -20,7 +20,7 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
         # 设置基准波长索引 选择最大波长
-        self.base_wavelength_idx = len(wavelengths) /2
+        self.base_wavelength_idx = len(wavelengths) - 1
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)

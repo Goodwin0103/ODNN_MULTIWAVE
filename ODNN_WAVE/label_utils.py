@@ -2,16 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 
-def create_labels_mode_wavelength(H, W, radius, mode_idx, wl_idx):
+def create_labels_mode_wavelength(H, W, radius, mode_idx, wl_idx, offsets=None):
     """
-    为特定的模式和波长组合创建标签。
-    标签布局为3×3网格，行表示模式，列表示波长。
+    为特定的模式和波长组合创建标签，与evaluation_regions使用相同的坐标计算
     
     参数:
         H, W: 图像高度和宽度
         radius: 圆形区域的半径
         mode_idx: 模式索引 (0, 1, 2)
         wl_idx: 波长索引 (0, 1, 2)
+        offsets: 可选的偏移列表 [(row_offset, col_offset), ...]
     
     返回:
         output_image: 二值图像，圆内为1，其它区域为0
@@ -19,15 +19,21 @@ def create_labels_mode_wavelength(H, W, radius, mode_idx, wl_idx):
     # 初始化输出图像
     output_image = np.zeros((H, W))
     
-    # 计算3×3网格的布局参数
-    grid_size = 3  # 3×3网格
-    padding = radius * 2  # 边缘填充
-    cell_width = (W - 2 * padding) // grid_size  # 每个单元格的宽度
-    cell_height = (H - 2 * padding) // grid_size  # 每个单元格的高度
+    # 使用与create_evaluation_regions_mode_wavelength完全相同的坐标计算
+    grid_size = 3
+    padding = radius * 2
+    cell_width = (W - 2 * padding) // grid_size
+    cell_height = (H - 2 * padding) // grid_size
     
-    # 计算圆心位置
+    # 计算基础圆心位置（与evaluation_regions完全一致）
     center_x = padding + wl_idx * cell_width + cell_width // 2
     center_y = padding + mode_idx * cell_height + cell_height // 2
+    
+    # 应用偏移（如果提供）
+    if offsets is not None and wl_idx < len(offsets):
+        row_offset, col_offset = offsets[wl_idx]
+        center_x += col_offset
+        center_y += row_offset
     
     # 创建圆形区域
     Y, X = np.ogrid[:H, :W]
@@ -36,35 +42,40 @@ def create_labels_mode_wavelength(H, W, radius, mode_idx, wl_idx):
     
     return output_image
 
-def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize):
+def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize, offsets=None):
     """
-    为3种模式和3种波长创建9个评估区域。
-    布局为3×3网格，行表示模式，列表示波长。
+    为3种模式和3种波长创建9个评估区域，支持偏移
     
     参数:
         H, W: 图像高度和宽度
         radius: 圆形区域的半径
         detectsize: 检测区域的大小
+        offsets: 可选的偏移列表 [(row_offset, col_offset), ...]
     
     返回:
         evaluation_regions: 列表，包含9个区域的坐标 (x_start, x_end, y_start, y_end)
     """
-    # 初始化输出图像和评估区域列表
     output_image = np.zeros((H, W))
     evaluation_regions = []
     
     # 计算3×3网格的布局参数
-    grid_size = 3  # 3×3网格
-    padding = radius * 2  # 边缘填充
-    cell_width = (W - 2 * padding) // grid_size  # 每个单元格的宽度
-    cell_height = (H - 2 * padding) // grid_size  # 每个单元格的高度
+    grid_size = 3
+    padding = radius * 2
+    cell_width = (W - 2 * padding) // grid_size
+    cell_height = (H - 2 * padding) // grid_size
     
     # 为每个模式-波长组合创建评估区域
     for mode_idx in range(grid_size):
         for wl_idx in range(grid_size):
-            # 计算圆心位置
+            # 计算基础圆心位置
             center_x = padding + wl_idx * cell_width + cell_width // 2
             center_y = padding + mode_idx * cell_height + cell_height // 2
+            
+            # 应用偏移（如果提供）
+            if offsets is not None and wl_idx < len(offsets):
+                row_offset, col_offset = offsets[wl_idx]
+                center_x += col_offset
+                center_y += row_offset
             
             # 计算检测区域坐标
             half_size = detectsize // 2
@@ -77,7 +88,7 @@ def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize):
             evaluation_regions.append((x_start, x_end, y_start, y_end))
             
             # 在可视化图像中标记区域
-            output_image[y_start:y_end, x_start:x_end] = 0.5  # 灰色标记检测区域
+            output_image[y_start:y_end, x_start:x_end] = 0.5
             
             # 标记圆形区域
             Y, X = np.ogrid[:H, :W]
@@ -87,11 +98,12 @@ def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize):
     # 显示评估区域图像
     plt.figure(figsize=(8, 8))
     plt.imshow(output_image, cmap='gray')
-    plt.title('evaluation regions for 3 modes and 3 wavelengths')
+    plt.title('Evaluation regions for 3 modes and 3 wavelengths (with offsets)')
     plt.axis('off')
     plt.show()
     
     return evaluation_regions
+
 
 def evaluate_output(self, output_field):
     """

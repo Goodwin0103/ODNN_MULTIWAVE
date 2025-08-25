@@ -70,20 +70,31 @@ class DataGenerator:
 
 
     def generate_labels(self) -> torch.Tensor:
-        amplitudes = np.eye(self.config.num_modes)
-        label_data = torch.zeros([self.config.num_modes, len(self.config.wavelengths), 
-                              self.config.layer_size, self.config.layer_size])
-        for wave in range(len(self.config.wavelengths)):
-            label_mask = torch.from_numpy(create_labels(
-                self.config.layer_size, self.config.layer_size, 1,
-                self.config.focus_radius, 1,
-                row_offset=self.config.offsets[wave][0],
-                col_offset=self.config.offsets[wave][1]
-            ))
-            for index in range(self.config.num_modes):
-                amp = torch.from_numpy(amplitudes[index, 0:self.config.num_modes])[0]
-                label_data[index, wave, :, :] = amp * label_mask
-        return label_data
+        """为多模式多波长系统生成标签"""
+        labels = torch.zeros([
+            self.config.num_modes, 
+            len(self.config.wavelengths),
+            self.config.layer_size, 
+            self.config.layer_size
+        ])
+        
+        # 为每个模式和波长组合创建标签
+        for mode_idx in range(self.config.num_modes):
+            for wl_idx in range(len(self.config.wavelengths)):
+                # 使用修改后的函数，传入偏移参数
+                label_mask = create_labels_mode_wavelength(
+                    self.config.layer_size, 
+                    self.config.layer_size, 
+                    self.config.focus_radius,
+                    mode_idx,
+                    wl_idx,
+                    offsets=self.config.offsets  # ← 添加偏移参数
+                )
+                
+                labels[mode_idx, wl_idx] = torch.from_numpy(label_mask)
+        
+        return labels
+
 
     def _preprocess_image(self, image: torch.Tensor) -> torch.Tensor:
         padding_size = (self.config.layer_size - self.config.field_size) // 2
