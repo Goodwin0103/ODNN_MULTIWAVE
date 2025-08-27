@@ -67,15 +67,10 @@ class MultiModeMultiWavelengthDataGenerator:
             
         complex_weights_ts = self.generate_weights()
         
-        # 关键修复：交换Mode 1和Mode 3的物理映射
-        mode_mapping = {0: 2, 1: 1, 2: 0}  # 逻辑索引 -> 物理索引
-        
         multi_mode_multi_wl_data = []
         
         for logical_mode_idx in range(self.config.num_modes):
-            physical_mode_idx = mode_mapping[logical_mode_idx]
-            
-            print(f"🔄 逻辑模式{logical_mode_idx+1} -> 物理模式{physical_mode_idx+1}")
+            physical_mode_idx = logical_mode_idx
             
             mode_data = []
             for wl in self.config.wavelengths:
@@ -239,3 +234,5 @@ def generate_fields_ts(complex_weights, MMF_data, num_data, num_modes, image_siz
         image_data[idx,0] = field1
 
     return image_data
+
+
