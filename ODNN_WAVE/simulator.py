@@ -294,11 +294,14 @@ class Simulator:
             if intensity_np.ndim != 2:
                 print(f"⚠ 强度数组维度异常: {intensity_np.shape}")
                 return self._create_default_eval_result()
-            
-            # 归一化强度
+            peak_pos = np.unravel_index(np.argmax(intensity_np), intensity_np.shape)
+            print(f"🔍 仿真结果调试:")
+            print(f"  MODE {mode_idx+1}, WL {wl_idx+1}: 峰值位置 {peak_pos}")
+            print(f"  期望行: {mode_idx+1}, 实际峰值行: {peak_pos[0]}")           
+                        # 归一化强度
             if np.max(intensity_np) > 0:
                 intensity_np = intensity_np / np.max(intensity_np)
-            
+        
             # 计算质心位置
             y_coords, x_coords = np.mgrid[0:intensity_np.shape[0], 0:intensity_np.shape[1]]
             total_intensity = np.sum(intensity_np)
@@ -483,15 +486,11 @@ class Simulator:
     
     def simulate_propagation(self, phase_masks, input_field, process_all_modes=True, mode_specific_masks=None):
         """
-        执行光场传播仿真
-        
-        参数:
-            phase_masks: 相位掩码
-            input_field: 输入光场
-            process_all_modes: 是否处理所有模式
-            mode_specific_masks: 模式特定的掩码（可选）
+        执行光场传播仿真 - 添加坐标系调试
         """
         print("开始光场传播仿真...")
+        print("🔍 仿真参数调试:")
+        print(f"  输入场形状: {input_field.shape}")
         
         # 确保输入场是 PyTorch 张量
         if isinstance(input_field, np.ndarray):
@@ -519,8 +518,25 @@ class Simulator:
             
             for mode_idx in range(num_modes):
                 print(f"\n{'='*50}")
-                print(f"处理模式 {mode_idx+1}/{num_modes}")
+                print(f"🔍 处理模式 {mode_idx+1}/{num_modes} (数组索引: {mode_idx})")
                 print(f"{'='*50}")
+                
+                # 🔧 添加输入场分析
+                mode_field = input_field[mode_idx]  # [num_wavelengths, H, W]
+                print(f"  模式{mode_idx+1}输入场形状: {mode_field.shape}")
+                
+                # 分析输入场的能量分布
+                for wl_idx in range(num_wavelengths):
+                    wl_field = mode_field[wl_idx]
+                    if isinstance(wl_field, torch.Tensor):
+                        wl_field_np = wl_field.detach().cpu().numpy()
+                    else:
+                        wl_field_np = wl_field
+                    
+                    intensity = np.abs(wl_field_np) ** 2
+                    peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
+                    wl_nm = self.config.wavelengths[wl_idx] * 1e9
+                    print(f"    输入场 WL{wl_idx+1} ({wl_nm:.0f}nm): 峰值位置 {peak_pos}")
                 
                 # 使用通用相位掩膜或模式特定掩膜
                 if mode_specific_masks and mode_idx < len(mode_specific_masks):
@@ -529,10 +545,6 @@ class Simulator:
                 else:
                     current_masks = phase_masks
                     print(f"  使用通用相位掩膜")
-                
-                # 获取该模式的输入场
-                mode_field = input_field[mode_idx]  # [num_wavelengths, H, W]
-                print(f"  模式{mode_idx+1}输入场形状: {mode_field.shape}")
                 
                 # 仿真该模式
                 mode_results = self._simulate_single_mode(
@@ -544,26 +556,41 @@ class Simulator:
                 for wl_idx in range(num_wavelengths):
                     if f'wl_{wl_idx}' in mode_results:
                         field = mode_results[f'wl_{wl_idx}']['field']
+                        
+                        # 🔧 添加输出场分析
+                        if isinstance(field, torch.Tensor):
+                            field_np = field.detach().cpu().numpy()
+                        else:
+                            field_np = field
+                        
+                        output_intensity = np.abs(field_np) ** 2
+                        output_peak_pos = np.unravel_index(np.argmax(output_intensity), output_intensity.shape)
+                        wl_nm = self.config.wavelengths[wl_idx] * 1e9
+                        
+                        print(f"🔍 仿真输出分析:")
+                        print(f"  MODE {mode_idx+1}, WL{wl_idx+1} ({wl_nm:.0f}nm):")
+                        print(f"    输出峰值位置: {output_peak_pos}")
+                        print(f"    期望行位置: ~{40 + mode_idx * 60} (MODE {mode_idx+1})")
+                        print(f"    实际行位置: {output_peak_pos[0]}")
+                        
+                        # 判断是否聚焦到正确位置
+                        expected_y_center = 40 + mode_idx * 60  # 基于调试输出的计算
+                        y_tolerance = 30  # 允许的误差范围
+                        
+                        if abs(output_peak_pos[0] - expected_y_center) <= y_tolerance:
+                            print(f"    ✅ 聚焦位置正确")
+                        else:
+                            print(f"    ❌ 聚焦位置错误！")
+                            print(f"    可能原因: 模式索引映射问题")
+                        
                         eval_result = self._evaluate_propagation_result(field, mode_idx, wl_idx)
                         mode_evaluations.append(eval_result)
-                        
-                        # 打印评估结果
-                        wl_nm = self.config.wavelengths[wl_idx] * 1e9
-                        print(f"  模式{mode_idx+1}, {wl_nm:.0f}nm:")
-                        print(f"    聚焦比例: {eval_result.get('focus_ratio', 0):.4f}")
-                        print(f"    峰值强度: {eval_result.get('peak_intensity', 0):.6f}")
-                        print(f"    质心位置: {eval_result.get('centroid', (0,0))}")
                 
                 evaluation_results.extend(mode_evaluations)
                 print(f"✓ 模式{mode_idx+1}仿真完成，生成{len(mode_evaluations)}个评估结果")
             
             print(f"\n✅ 所有模式仿真完成，总计{len(evaluation_results)}个评估结果")
             return evaluation_results
-            
-        else:
-            # 处理其他维度的输入
-            print(f"处理{input_field.ndim}D输入...")
-            return self._simulate_single_mode(phase_masks, input_field)
 
     def generate_mode_specific_masks(self, base_masks, num_modes):
         """
@@ -672,6 +699,10 @@ class Simulator:
                     if phase is not None and phase.ndim > 2:
                         phase = phase[..., 0, 0] if phase.ndim == 4 else phase[..., 0]
                 
+                intensity_flipped = np.flipud(intensity)
+                if phase is not None:
+                    phase_flipped = np.flipud(phase)
+                
                 # 创建图形
                 if phase is not None:
                     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -679,21 +710,15 @@ class Simulator:
                     fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
                 
                 # 绘制强度分布
-                im1 = ax1.imshow(intensity, cmap='hot', origin='lower')
+                im1 = ax1.imshow(intensity_flipped, cmap='hot', origin='lower')
                 ax1.set_title(f'Field Intensity Distribution - {wl_nm}nm{mode_suffix}')
                 ax1.set_xlabel('X (pixels)')
                 ax1.set_ylabel('Y (pixels)')
                 plt.colorbar(im1, ax=ax1, label='Intensity')
                 
-                # 标记峰值位置
-                peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
-                ax1.plot(peak_pos[1], peak_pos[0], 'w+', markersize=15, markeredgewidth=2)
-                ax1.text(peak_pos[1]+5, peak_pos[0]+5, f'峰值({peak_pos[1]},{peak_pos[0]})', 
-                        color='white', fontsize=10)
-                
                 # 绘制相位分布（如果有）
                 if phase is not None:
-                    im2 = ax2.imshow(phase, cmap='hsv', origin='lower', vmin=-np.pi, vmax=np.pi)
+                    im2 = ax2.imshow(phase_flipped, cmap='hsv', origin='lower', vmin=-np.pi, vmax=np.pi)
                     ax2.set_title(f'Field Phase Distribution - {wl_nm}nm{mode_suffix}')
                     ax2.set_xlabel('X (pixels)')
                     ax2.set_ylabel('Y (pixels)')
@@ -862,32 +887,34 @@ class Simulator:
                             intensity = intensity.reshape(-1, intensity.shape[-2], intensity.shape[-1])
                             intensity = np.sum(intensity, axis=0)  # Sum over other dimensions
                         
-                        # Normalize
-                        if np.max(intensity) > 0:
-                            intensity = intensity / np.max(intensity)
+                        # 🔄 **关键修复：确保 intensity_flipped 总是被定义**
+                        intensity_flipped = np.flipud(intensity)
                         
-                        # Display intensity distribution
-                        im = ax.imshow(intensity, cmap='hot', origin='lower', aspect='equal')
+                        # Normalize
+                        if np.max(intensity_flipped) > 0:
+                            intensity_flipped = intensity_flipped / np.max(intensity_flipped)
+                        
+                        # Display intensity distribution (Y-axis flipped)
+                        im = ax.imshow(intensity_flipped, cmap='hot', origin='lower', aspect='equal')
                         ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm', fontsize=12)
                         
                         # Add colorbar
                         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, shrink=0.8)
                         
-                        # Mark peak position
-                        peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
-                        ax.plot(peak_pos[1], peak_pos[0], 'w+', markersize=12, markeredgewidth=2)
+                        # Removed focus center marker
+                        # ax.plot(peak_pos_flipped[1], peak_pos_flipped[0], 'w+', markersize=12, markeredgewidth=2)
                         
                         # Add performance metric text
-                        peak_intensity = np.max(intensity)
-                        total_intensity = np.sum(intensity)
+                        peak_intensity = np.max(intensity_flipped)
+                        total_intensity = np.sum(intensity_flipped)
                         
                         # Calculate focus ratio
-                        center_y, center_x = intensity.shape[0] // 2, intensity.shape[1] // 2
-                        radius = min(intensity.shape) // 8  # Focus region radius
-                        y_grid, x_grid = np.meshgrid(np.arange(intensity.shape[0]), 
-                                                np.arange(intensity.shape[1]), indexing='ij')
+                        center_y, center_x = intensity_flipped.shape[0] // 2, intensity_flipped.shape[1] // 2
+                        radius = min(intensity_flipped.shape) // 8  # Focus region radius
+                        y_grid, x_grid = np.meshgrid(np.arange(intensity_flipped.shape[0]), 
+                                                np.arange(intensity_flipped.shape[1]), indexing='ij')
                         focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= radius**2
-                        focus_ratio = np.sum(intensity[focus_mask]) / total_intensity if total_intensity > 0 else 0
+                        focus_ratio = np.sum(intensity_flipped[focus_mask]) / total_intensity if total_intensity > 0 else 0
                         
                         # Display metrics on the plot
                         ax.text(0.02, 0.98, f'Peak: {peak_intensity:.3f}\nFocus: {focus_ratio:.3f}', 
@@ -1186,7 +1213,7 @@ class Simulator:
                 capsize=5, alpha=0.7, color='skyblue')
         ax1.set_xlabel('层数')
         ax1.set_ylabel('聚焦效率')
-        ax1.set_title('Focusing Efficiency Comparison across Layers')
+        ax1.set_title('不同层数模型的聚焦效率对比')
         ax1.set_xticks(range(len(layers_list)))
         ax1.set_xticklabels([f'{l}层' for l in layers_list])
         ax1.grid(True, alpha=0.3)
@@ -1200,21 +1227,21 @@ class Simulator:
                 capsize=5, alpha=0.7, color='lightcoral')
         ax2.set_xlabel('层数')
         ax2.set_ylabel('峰值强度')
-        ax2.set_title('Peak Intensity Comparison across Layers')
+        ax2.set_title('不同层数模型的峰值强度对比')
         ax2.set_xticks(range(len(layers_list)))
         ax2.set_xticklabels([f'{l}层' for l in layers_list])
         ax2.grid(True, alpha=0.3)
         
         # 3. 均匀性对比
         ax3 = axes[1, 0]
-        uni_means = [np.mean(layers_performance[l]['uniformity']) for l in layers_list]
-        uni_stds = [np.std(layers_performance[l]['uniformity']) for l in layers_list]
+        uniformity_means = [np.mean(layers_performance[l]['uniformity']) for l in layers_list]
+        uniformity_stds = [np.std(layers_performance[l]['uniformity']) for l in layers_list]
         
-        ax3.bar(range(len(layers_list)), uni_means, yerr=uni_stds, 
+        ax3.bar(range(len(layers_list)), uniformity_means, yerr=uniformity_stds, 
                 capsize=5, alpha=0.7, color='lightgreen')
         ax3.set_xlabel('层数')
-        ax3.set_ylabel('均匀性 (越小越好)')
-        ax3.set_title('Uniformity Comparison across Layers')
+        ax3.set_ylabel('均匀性 (标准差/均值)')
+        ax3.set_title('不同层数模型的均匀性对比')
         ax3.set_xticks(range(len(layers_list)))
         ax3.set_xticklabels([f'{l}层' for l in layers_list])
         ax3.grid(True, alpha=0.3)
@@ -1222,31 +1249,26 @@ class Simulator:
         # 4. 综合性能雷达图
         ax4 = axes[1, 1]
         
-        # 归一化指标 (0-1)
-        focus_norm = np.array(focus_means) / np.max(focus_means) if np.max(focus_means) > 0 else np.zeros_like(focus_means)
-        peak_norm = np.array(peak_means) / np.max(peak_means) if np.max(peak_means) > 0 else np.zeros_like(peak_means)
-        uni_norm = 1 - (np.array(uni_means) / np.max(uni_means)) if np.max(uni_means) > 0 else np.ones_like(uni_means)  # 均匀性越小越好，所以取反
+        # 归一化指标（0-1范围）
+        focus_norm = [(f - min(focus_means)) / (max(focus_means) - min(focus_means)) if max(focus_means) > min(focus_means) else 0.5 for f in focus_means]
+        peak_norm = [(p - min(peak_means)) / (max(peak_means) - min(peak_means)) if max(peak_means) > min(peak_means) else 0.5 for p in peak_means]
+        # 均匀性越小越好，所以需要反转
+        uniformity_norm = [1 - (u - min(uniformity_means)) / (max(uniformity_means) - min(uniformity_means)) if max(uniformity_means) > min(uniformity_means) else 0.5 for u in uniformity_means]
         
-        # 综合得分
-        composite_scores = (focus_norm + peak_norm + uni_norm) / 3
+        x = np.arange(len(layers_list))
+        width = 0.25
         
-        colors = plt.cm.viridis(np.linspace(0, 1, len(layers_list)))
-        bars = ax4.bar(range(len(layers_list)), composite_scores, 
-                       color=colors, alpha=0.7)
+        ax4.bar(x - width, focus_norm, width, label='聚焦效率', alpha=0.7)
+        ax4.bar(x, peak_norm, width, label='峰值强度', alpha=0.7)
+        ax4.bar(x + width, uniformity_norm, width, label='均匀性(反转)', alpha=0.7)
+        
         ax4.set_xlabel('层数')
-        ax4.set_ylabel('综合性能得分')
-        ax4.set_title('Overall Performance Comparison')
-        ax4.set_xticks(range(len(layers_list)))
+        ax4.set_ylabel('归一化性能 (0-1)')
+        ax4.set_title('综合性能对比 (归一化)')
+        ax4.set_xticks(x)
         ax4.set_xticklabels([f'{l}层' for l in layers_list])
+        ax4.legend()
         ax4.grid(True, alpha=0.3)
-        
-        # 标注最佳性能
-        best_idx = np.argmax(composite_scores)
-        ax4.annotate(f'最佳: {layers_list[best_idx]}层\n得分: {composite_scores[best_idx]:.3f}', 
-                     xy=(best_idx, composite_scores[best_idx]), 
-                     xytext=(best_idx, composite_scores[best_idx] + 0.1),
-                     arrowprops=dict(arrowstyle='->', color='red'),
-                     ha='center', fontweight='bold', color='red')
         
         plt.tight_layout()
         
@@ -1257,74 +1279,32 @@ class Simulator:
         
         print(f"✅ 性能对比图已保存到: {comparison_path}")
         
-        # 打印最佳性能总结
-        print(f"\n🏆 性能对比总结:")
-        print(f"最佳聚焦效率: {layers_list[np.argmax(focus_means)]}层 ({np.max(focus_means):.4f})")
-        print(f"最佳峰值强度: {layers_list[np.argmax(peak_means)]}层 ({np.max(peak_means):.6f})")
-        print(f"最佳均匀性: {layers_list[np.argmin(uni_means)]}层 ({np.min(uni_means):.4f})")
-        print(f"最佳综合性能: {layers_list[best_idx]}层 (得分: {composite_scores[best_idx]:.3f})")
+        # 生成性能总结
+        print("\n📊 性能总结:")
+        print("-" * 50)
+        
+        best_focus_layer = layers_list[np.argmax(focus_means)]
+        best_peak_layer = layers_list[np.argmax(peak_means)]
+        best_uniformity_layer = layers_list[np.argmin(uniformity_means)]
+        
+        print(f"最佳聚焦效率: {best_focus_layer}层 ({max(focus_means):.4f})")
+        print(f"最佳峰值强度: {best_peak_layer}层 ({max(peak_means):.6f})")
+        print(f"最佳均匀性: {best_uniformity_layer}层 ({min(uniformity_means):.4f})")
+        
+        # 计算综合得分
+        comprehensive_scores = []
+        for i, layers in enumerate(layers_list):
+            score = (focus_norm[i] + peak_norm[i] + uniformity_norm[i]) / 3
+            comprehensive_scores.append(score)
+        
+        best_comprehensive_idx = np.argmax(comprehensive_scores)
+        best_comprehensive_layer = layers_list[best_comprehensive_idx]
+        
+        print(f"综合性能最佳: {best_comprehensive_layer}层 (得分: {max(comprehensive_scores):.4f})")
+        score = (focus_norm[i] + peak_norm[i] + uniformity_norm[i]) / 3
+        comprehensive_scores.append(score)
     
-    def run_complete_analysis(self, save_dir):
-        """
-        运行完整的分析流程
+        best_comprehensive_idx = np.argmax(comprehensive_scores)
+        best_comprehensive_layer = layers_list[best_comprehensive_idx]
         
-        参数:
-            save_dir: 保存目录
-        """
-        print("开始完整分析流程...")
-        
-        try:
-            # 1. 创建传播结果总结图
-            self.create_propagation_summary(save_dir)
-            
-            # 2. 创建详细分析报告
-            self.create_detailed_analysis(save_dir)
-            
-            # 3. 创建性能对比图
-            self.create_performance_comparison(save_dir)
-            
-            print("✅ 完整分析流程完成！")
-            
-        except Exception as e:
-            print(f"❌ 分析过程中出错: {e}")
-            import traceback
-            traceback.print_exc()
-
-    def generate_input_fields_for_simulation(self):
-        """
-        为仿真生成多模式多波长输入场
-        
-        返回:
-            torch.Tensor: [num_modes, num_wavelengths, H, W] 的输入场
-        """
-        print(f"生成 {self.config.num_modes} 个模式，{len(self.config.wavelengths)} 个波长的输入场...")
-        
-        # 创建输入场数组
-        input_fields = torch.zeros(
-            self.config.num_modes, 
-            len(self.config.wavelengths), 
-            self.config.field_size, 
-            self.config.field_size, 
-            dtype=torch.complex64
-        )
-        
-        # 为每个模式生成不同的输入场
-        for mode_idx in range(self.config.num_modes):
-            print(f"  生成模式 {mode_idx + 1}...")
-            
-            # 为每个波长生成场
-            for wl_idx, wavelength in enumerate(self.config.wavelengths):
-                # 生成高斯光束，每个模式有不同的参数
-                field = self._generate_gaussian_beam(
-                    mode_idx=mode_idx,
-                    wavelength=wavelength,
-                    size=self.config.field_size
-                )
-                
-                input_fields[mode_idx, wl_idx] = field
-                
-                wl_nm = wavelength * 1e9
-                print(f"    {wl_nm:.0f}nm: 最大强度 = {torch.max(torch.abs(field)**2):.6f}")
-        
-        print(f"✓ 输入场生成完成，形状: {input_fields.shape}")
-        return input_fields
+        print(f"综合性能最佳: {best_comprehensive_layer}层 (得分: {max(comprehensive_scores):.4f})")

@@ -90,50 +90,72 @@ class Visualizer:
         return organized_data
 
     def _extract_file_info(self, filename):
-        """从文件名提取信息"""
-        # 提取模式
-        mode_match = re.search(r'mode(\d+)', filename)
-        if not mode_match:
+        """修复版文件名解析 - 处理1-based模式索引"""
+        print(f"🔍 解析文件名: {filename}")
+        
+        # 提取模式 - 支持1-based索引
+        mode_patterns = [
+            r'mode(\d+)',
+            r'Mode(\d+)', 
+            r'MODE(\d+)',
+            r'm(\d+)',
+            r'_(\d+)mode'
+        ]
+        
+        mode_idx = None
+        for pattern in mode_patterns:
+            mode_match = re.search(pattern, filename, re.IGNORECASE)
+            if mode_match:
+                # 关键修复：将1-based转换为0-based
+                mode_idx = int(mode_match.group(1)) - 1  # 减1转换为0-based
+                print(f"  模式匹配: {pattern} -> 原值={int(mode_match.group(1))}, 转换后={mode_idx}")
+                break
+        
+        if mode_idx is None:
+            print(f"  ❌ 无法提取模式信息")
             return None
-        mode_idx = int(mode_match.group(1))
+        
+        # 检查转换后的模式索引范围
+        if mode_idx < 0 or mode_idx >= 3:  # 0-based: 0,1,2
+            print(f"  ⚠ 转换后模式索引超出范围: {mode_idx}")
         
         # 提取波长
         wl_match = re.search(r'(\d+)nm', filename)
         if not wl_match:
+            print(f"  ❌ 无法提取波长信息")
             return None
-        wl_nm = int(wl_match.group(1))
         
-        # 提取层数 - 使用多种模式
-        layers_match = None
-        patterns = [
-            r'(\d+)layers?',
-            r'_(\d+)L_',
-            r'layer(\d+)',
-            r'L(\d+)_',
-            r'_(\d+)_layers'
+        wl_nm = int(wl_match.group(1))
+        print(f"  波长匹配: {wl_nm}nm")
+        
+        # 提取层数
+        layer_patterns = [
+            r'(\d+)layers',
+            r'(\d+)layer',
+            r'L(\d+)',
+            r'_(\d+)L'
         ]
         
-        for pattern in patterns:
-            match = re.search(pattern, filename)
-            if match:
-                layers_match = int(match.group(1))
+        layers = None
+        for pattern in layer_patterns:
+            layer_match = re.search(pattern, filename, re.IGNORECASE)
+            if layer_match:
+                layers = int(layer_match.group(1))
+                print(f"  层数匹配: {pattern} -> {layers}")
                 break
         
-        if not layers_match:
-            # 如果都没找到，尝试从常见值推断
-            for possible_layers in [1, 2, 3, 4, 5, 6, 7, 8]:
-                if f"_{possible_layers}layers_" in filename or f"_{possible_layers}layer_" in filename:
-                    layers_match = possible_layers
-                    break
-        
-        if not layers_match:
+        if layers is None:
+            print(f"  ❌ 无法提取层数信息")
             return None
         
-        return {
-            'mode': mode_idx,
+        result = {
+            'mode': mode_idx,      # 现在是0-based
             'wavelength': wl_nm,
-            'layers': layers_match
+            'layers': layers
         }
+        
+        print(f"  ✅ 解析结果: {result}")
+        return result
 
     def _calculate_focus_efficiency(self, field_data):
         """
@@ -186,34 +208,56 @@ class Visualizer:
         return focus_efficiency
 
     def _reorganize_visibility_by_mode(self, visibility_data, config, num_layer_options):
-        """重新按模式组织 visibility 数据"""
+        """重新按模式组织 visibility 数据 - 修复版"""
         
         organized_data = []
         
-        print(f"重新组织数据: {config.num_modes} 个模式, {len(num_layer_options)} 个层数选项")
+        print(f"\n🔄 重新组织数据 (修复版):")
+        print(f"  配置: {config.num_modes} 个模式, {len(num_layer_options)} 个层数选项")
+        print(f"  可见性数据键值数量: {len(visibility_data)}")
         
-        for mode_idx in range(1, config.num_modes + 1):  # 模式从1开始
+        # 显示所有可用的键值
+        print(f"  可用键值 (layers, mode, wavelength):")
+        for key in sorted(visibility_data.keys()):
+            print(f"    {key}: {visibility_data[key]:.4f}")
+        
+        missing_keys = []
+        found_keys = []
+        
+        for mode_idx in range(config.num_modes):  # 0, 1, 2
             mode_data = []
+            print(f"\n  处理模式 {mode_idx} (0-based):")
             
             for layers in num_layer_options:
                 wavelength_data = []
                 
                 for wl in config.wavelengths:
                     wl_nm = int(wl * 1e9)
-                    key = (layers, mode_idx, wl_nm)
+                    key = (layers, mode_idx+1, wl_nm)  # 现在使用0-based模式索引
                     
                     if key in visibility_data:
                         visibility = visibility_data[key]
-                        print(f"  模式{mode_idx}, {layers}层, {wl_nm}nm: {visibility:.4f}")
+                        found_keys.append(key)
+                        print(f"    ✅ {key}: {visibility:.4f}")
                     else:
-                        visibility = 0.0  # 缺失数据设为0
-                        print(f"  模式{mode_idx}, {layers}层, {wl_nm}nm: 缺失数据")
+                        visibility = 0.0
+                        missing_keys.append(key)
+                        print(f"    ❌ {key}: 缺失")
                     
                     wavelength_data.append(visibility)
                 
                 mode_data.append(wavelength_data)
             
             organized_data.append(mode_data)
+        
+        print(f"\n📈 数据统计:")
+        print(f"  找到的键值: {len(found_keys)}")
+        print(f"  缺失的键值: {len(missing_keys)}")
+        
+        if missing_keys:
+            print(f"  前10个缺失键值:")
+            for key in missing_keys[:10]:
+                print(f"    {key}")
         
         return organized_data
 

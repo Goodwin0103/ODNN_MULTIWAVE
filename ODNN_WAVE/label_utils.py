@@ -45,15 +45,7 @@ def create_labels_mode_wavelength(H, W, radius, mode_idx, wl_idx, offsets=None):
 def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize, offsets=None):
     """
     为3种模式和3种波长创建9个评估区域，支持偏移
-    
-    参数:
-        H, W: 图像高度和宽度
-        radius: 圆形区域的半径
-        detectsize: 检测区域的大小
-        offsets: 可选的偏移列表 [(row_offset, col_offset), ...]
-    
-    返回:
-        evaluation_regions: 列表，包含9个区域的坐标 (x_start, x_end, y_start, y_end)
+    修正版：确保MODE 1对应第1行，MODE 2对应第2行，MODE 3对应第3行
     """
     output_image = np.zeros((H, W))
     evaluation_regions = []
@@ -64,9 +56,9 @@ def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize, offsets=
     cell_width = (W - 2 * padding) // grid_size
     cell_height = (H - 2 * padding) // grid_size
     
-    # 为每个模式-波长组合创建评估区域
-    for mode_idx in range(grid_size):
-        for wl_idx in range(grid_size):
+    # 🔧 修正：为每个模式-波长组合创建评估区域
+    for mode_idx in range(grid_size):  # 0, 1, 2 对应内部索引
+        for wl_idx in range(grid_size):   # 0, 1, 2 对应波长索引
             # 计算基础圆心位置
             center_x = padding + wl_idx * cell_width + cell_width // 2
             center_y = padding + mode_idx * cell_height + cell_height // 2
@@ -95,15 +87,16 @@ def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize, offsets=
             dist_from_center = np.sqrt((X - center_x) ** 2 + (Y - center_y) ** 2)
             output_image[dist_from_center <= radius] = 1
     
-    # 显示评估区域图像
-    plt.figure(figsize=(8, 8))
-    plt.imshow(output_image, cmap='gray')
-    plt.title('Evaluation regions for 3 modes and 3 wavelengths (with offsets)')
-    plt.axis('off')
-    plt.show()
+    # 🔧 添加调试输出
+    print("🔍 标签坐标映射调试:")
+    for mode_idx in range(grid_size):
+        for wl_idx in range(grid_size):
+            region_idx = mode_idx * grid_size + wl_idx
+            center_x = padding + wl_idx * cell_width + cell_width // 2
+            center_y = padding + mode_idx * cell_height + cell_height // 2
+            print(f"  MODE {mode_idx+1}, WL {wl_idx+1}: 中心位置 ({center_x}, {center_y}), 区域索引 {region_idx}")
     
     return evaluation_regions
-
 
 def evaluate_output(self, output_field):
     """
