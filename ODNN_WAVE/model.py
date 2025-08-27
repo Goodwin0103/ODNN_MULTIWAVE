@@ -20,7 +20,7 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
         # 设置基准波长索引 选择最大波长
-        self.base_wavelength_idx = wavelengths[1]
+        self.base_wavelength_idx = 0
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)
@@ -33,7 +33,7 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         根据波长反比关系计算相位延迟系数
         相位延迟 φ = 2π·OPD/λ，因此系数与波长成反比
         """
-        base_wavelength = wavelengths[1]
+        base_wavelength = wavelengths[self.base_wavelength_idx]
         coefficients = []
         
         print(f"计算波长系数 (基准波长: {base_wavelength*1e9:.1f}nm)")
@@ -295,7 +295,7 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
         # 设置基准波长索引
-        self.base_wavelength_idx = wavelengths[1]
+        self.base_wavelength_idx = 0
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)
@@ -312,7 +312,7 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         """
         根据波长反比关系计算相位延迟系数
         """
-        base_wavelength = wavelengths[2]
+        base_wavelength = wavelengths[self.base_wavelength_idx]
         coefficients = []
         
         print(f"计算波长系数 (基准波长: {base_wavelength*1e9:.1f}nm)")
