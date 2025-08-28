@@ -330,6 +330,7 @@ class Visualizer:
         
         # 综合可见度 = 两个维度的加权平均
         comprehensive_visibility = cross_score * 0.5 + snr_score * 0.5
+        comprehensive_visibility = cross_score * 0.5 + snr_score * 0.5
         
         return {
             'cross_matrix': cross_matrix_result,
@@ -1408,3 +1409,60 @@ Region Information:
                         for color in wavelength_colors.values()]
         ax.legend(legend_elements, [f'{wl}nm' for wl in wavelength_colors.keys()], 
                 loc='upper right', title='Wavelength', fontsize=10)
+
+
+    def calculate_snr_from_simulation_results(self, save_dir, config, num_layer_options):
+        """
+        从传播仿真结果计算SNR数据（简化版）
+        """
+        print("🔍 从传播仿真结果计算SNR数据...")
+        
+        # 查找所有仿真结果文件
+        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
+        
+        if not result_files:
+            print("❌ 未找到仿真结果文件")
+            return None
+        
+        print(f"找到 {len(result_files)} 个仿真结果文件")
+        
+        # 组织数据结构
+        snr_data = {}
+        
+        for file_path in result_files:
+            filename = os.path.basename(file_path)
+            
+            # 提取文件信息
+            file_info = self._extract_file_info(filename)
+            if not file_info:
+                print(f"⚠ 无法解析文件名: {filename}")
+                continue
+            
+            mode_idx, wl_nm, layers = file_info['mode'], file_info['wavelength'], file_info['layers']
+            
+            try:
+                # 加载仿真数据
+                data = np.load(file_path, allow_pickle=True)
+                
+                # 计算SNR
+                snr_result = self.calculate_signal_noise_ratio(data)
+                
+                # 创建友好的键名
+                key_str = f"layers{layers}_mode{mode_idx+1}_{wl_nm}nm"
+                snr_data[key_str] = snr_result['snr_db'] / 20.0  # 归一化到0-1
+                
+                print(f"  {layers}层, 模式{mode_idx+1}, {wl_nm}nm: SNR={snr_result['snr_db']:.2f}dB")
+                
+            except Exception as e:
+                print(f"❌ 处理文件 {filename} 时出错: {e}")
+                continue
+        
+        print(f"成功处理 {len(snr_data)} 个数据点")
+        
+        return snr_data
+
+    def _find_optimal_config_from_data(self, snr_data):
+        """从SNR数据中找到最优配置"""
+        if not snr_data:
+            return "N/A"
+        return max(snr_data, key=snr_data.get)
