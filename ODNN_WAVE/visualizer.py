@@ -1466,3 +1466,910 @@ Region Information:
         if not snr_data:
             return "N/A"
         return max(snr_data, key=snr_data.get)
+class SeparatedDimensionVisualizer(Visualizer):
+    """分离的双维度可视化器"""
+    
+    def __init__(self, config):
+        super().__init__(config)
+    
+    # ==================== Cross Matrix 独立可视化 ====================
+    
+    def create_cross_matrix_visualization(self, cross_matrix_data, config, num_layer_options, 
+                                        save_path=None, title_suffix=""):
+        """
+        独立的Cross Matrix可视化
+        """
+        if not cross_matrix_data:
+            print("❌ 没有Cross Matrix数据")
+            return None
+        
+        print("🎨 创建Cross Matrix独立可视化...")
+        
+        # 创建2x2布局
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig.suptitle(f'Cross Matrix Analysis Dashboard{title_suffix}', 
+                    fontsize=18, fontweight='bold', y=0.95)
+        
+        # 1. Cross Matrix 性能柱状图 (左上)
+        self._create_cross_matrix_bar_chart(axes[0, 0], cross_matrix_data, config, num_layer_options)
+        
+        # 2. 聚焦集中度热图 (右上)
+        self._create_focus_concentration_heatmap(axes[0, 1], cross_matrix_data, config, num_layer_options)
+        
+        # 3. 按波长分组的Cross Matrix性能 (左下)
+        self._create_cross_matrix_wavelength_analysis(axes[1, 0], cross_matrix_data, config, num_layer_options)
+        
+        # 4. 最佳配置的Cross Matrix网格可视化 (右下)
+        self._create_best_cross_matrix_grid(axes[1, 1], cross_matrix_data, config)
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.90)
+        
+        if save_path is None:
+            save_path = os.path.join(config.save_dir, f'cross_matrix_analysis{title_suffix}.png')
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.show()
+        
+        print(f"✅ Cross Matrix分析已保存: {save_path}")
+        return fig
+    
+    def _create_cross_matrix_bar_chart(self, ax, cross_matrix_data, config, num_layer_options):
+        """Cross Matrix性能柱状图"""
+        # 按模式和层数组织数据
+        modes = list(range(config.num_modes))
+        bar_width = 0.25
+        x_positions = np.arange(len(num_layer_options))
+        colors = ['#3498db', '#e74c3c', '#2ecc71']
+        
+        for mode_idx in modes:
+            focus_concentrations = []
+            for layers in num_layer_options:
+                # 计算该层数和模式下的平均聚焦集中度
+                mode_layer_values = []
+                for key, data in cross_matrix_data.items():
+                    if self._match_config(key, layers, mode_idx):
+                        if 'focus_concentration' in data:
+                            mode_layer_values.append(data['focus_concentration'])
+                
+                avg_focus = np.mean(mode_layer_values) if mode_layer_values else 0
+                focus_concentrations.append(avg_focus)
+            
+            # 创建柱状图
+            bars = ax.bar(x_positions + mode_idx * bar_width, focus_concentrations,
+                        bar_width, label=f'Mode {mode_idx+1}',
+                        color=colors[mode_idx], alpha=0.8, edgecolor='black')
+            
+            # 添加数值标注
+            for bar, value in zip(bars, focus_concentrations):
+                if value > 0:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                        f'{value:.3f}', ha='center', va='bottom',
+                        fontweight='bold', fontsize=9)
+        
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Focus Concentration', fontsize=12, fontweight='bold')
+        ax.set_title('Cross Matrix - Focus Concentration by Layers', fontsize=14, fontweight='bold')
+        ax.set_xticks(x_positions + bar_width)
+        ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim(0, 1.0)
+    
+    def _create_focus_concentration_heatmap(self, ax, cross_matrix_data, config, num_layer_options):
+        """聚焦集中度热图"""
+        # 构建热图数据矩阵
+        wavelengths = [int(wl * 1e9) for wl in config.wavelengths]
+        
+        # 为每个模式创建子热图
+        num_modes = config.num_modes
+        fig_data = np.zeros((num_modes * len(wavelengths), len(num_layer_options)))
+        
+        row_labels = []
+        for mode_idx in range(num_modes):
+            for wl_idx, wl in enumerate(wavelengths):
+                row_idx = mode_idx * len(wavelengths) + wl_idx
+                row_labels.append(f'M{mode_idx+1}-{wl}nm')
+                
+                for col_idx, layers in enumerate(num_layer_options):
+                    # 查找匹配的数据
+                    for key, data in cross_matrix_data.items():
+                        if self._match_config_full(key, layers, mode_idx, wl):
+                            if 'focus_concentration' in data:
+                                fig_data[row_idx, col_idx] = data['focus_concentration']
+                            break
+        
+        # 绘制热图
+        im = ax.imshow(fig_data, cmap='RdYlBu_r', aspect='auto', vmin=0, vmax=1)
+        
+        # 添加数值标注
+        for i in range(fig_data.shape[0]):
+            for j in range(fig_data.shape[1]):
+                value = fig_data[i, j]
+                color = 'white' if value < 0.5 else 'black'
+                ax.text(j, i, f'{value:.3f}', ha='center', va='center',
+                       color=color, fontweight='bold', fontsize=9)
+        
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Mode-Wavelength', fontsize=12, fontweight='bold')
+        ax.set_title('Focus Concentration Heatmap', fontsize=14, fontweight='bold')
+        ax.set_xticks(range(len(num_layer_options)))
+        ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
+        ax.set_yticks(range(len(row_labels)))
+        ax.set_yticklabels(row_labels, fontsize=8)
+        
+        # 添加颜色条
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Focus Concentration', fontweight='bold')
+    
+    def _create_cross_matrix_wavelength_analysis(self, ax, cross_matrix_data, config, num_layer_options):
+        """按波长分析Cross Matrix性能"""
+        wavelengths = [int(wl * 1e9) for wl in config.wavelengths]
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
+        
+        # 准备数据
+        wl_data = {wl: [] for wl in wavelengths}
+        
+        for key, data in cross_matrix_data.items():
+            for wl in wavelengths:
+                if self._contains_wavelength(key, wl):
+                    if 'focus_concentration' in data:
+                        wl_data[wl].append(data['focus_concentration'])
+                    break
+        
+        # 计算统计数据
+        wl_means = []
+        wl_stds = []
+        wl_labels = []
+        bar_colors = []
+        
+        for i, wl in enumerate(wavelengths):
+            if wl_data[wl]:
+                wl_means.append(np.mean(wl_data[wl]))
+                wl_stds.append(np.std(wl_data[wl]))
+                wl_labels.append(f'{wl}nm\n({len(wl_data[wl])} configs)')
+                bar_colors.append(colors[i])
+            else:
+                wl_means.append(0)
+                wl_stds.append(0)
+                wl_labels.append(f'{wl}nm\n(0 configs)')
+                bar_colors.append('#cccccc')
+        
+        # 创建柱状图
+        bars = ax.bar(range(len(wavelengths)), wl_means,
+                    color=bar_colors, alpha=0.8, edgecolor='black', linewidth=1,
+                    yerr=wl_stds, capsize=5, error_kw={'linewidth': 2})
+        
+        # 添加数值标注
+        for i, (bar, mean_val, std_val) in enumerate(zip(bars, wl_means, wl_stds)):
+            if mean_val > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + std_val + 0.01,
+                    f'{mean_val:.3f}', ha='center', va='bottom',
+                    fontweight='bold', fontsize=11)
+        
+        # 标记最佳波长
+        if wl_means and max(wl_means) > 0:
+            best_idx = np.argmax(wl_means)
+            best_bar = bars[best_idx]
+            ax.text(best_bar.get_x() + best_bar.get_width()/2,
+                best_bar.get_height() + wl_stds[best_idx] + 0.03,
+                '★ BEST', ha='center', va='bottom',
+                fontsize=12, color='gold', fontweight='bold')
+        
+        ax.set_title('Cross Matrix Performance by Wavelength', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Wavelength', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Avg Focus Concentration ± Std', fontsize=12, fontweight='bold')
+        ax.set_xticks(range(len(wavelengths)))
+        ax.set_xticklabels(wl_labels)
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim(0, 1.0)
+    
+    def _create_best_cross_matrix_grid(self, ax, cross_matrix_data, config):
+        """显示最佳配置的Cross Matrix网格"""
+        # 找到最佳配置
+        best_key = None
+        best_concentration = 0
+        
+        for key, data in cross_matrix_data.items():
+            if 'focus_concentration' in data:
+                if data['focus_concentration'] > best_concentration:
+                    best_concentration = data['focus_concentration']
+                    best_key = key
+        
+        if best_key is None or 'cross_matrix' not in cross_matrix_data[best_key]:
+            ax.text(0.5, 0.5, 'No Cross Matrix Data Available', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 获取最佳配置的cross matrix
+        best_matrix = cross_matrix_data[best_key]['cross_matrix']
+        grid_size = cross_matrix_data[best_key].get('grid_size', 8)
+        
+        # 绘制热图
+        im = ax.imshow(best_matrix, cmap='hot', aspect='auto')
+        
+        # 添加数值标注
+        for i in range(grid_size):
+            for j in range(grid_size):
+                value = best_matrix[i, j]
+                color = 'white' if value < np.max(best_matrix) * 0.5 else 'black'
+                ax.text(j, i, f'{value:.3f}', ha='center', va='center',
+                       color=color, fontweight='bold', fontsize=10)
+        
+        # 标记最强区域
+        max_pos = np.unravel_index(np.argmax(best_matrix), best_matrix.shape)
+        circle = Circle((max_pos[1], max_pos[0]), 0.3, fill=False, 
+                       color='cyan', linewidth=3)
+        ax.add_patch(circle)
+        
+        ax.set_title(f'Best Cross Matrix Grid\n{best_key}\nConcentration: {best_concentration:.3f}', 
+                    fontsize=12, fontweight='bold')
+        ax.set_xlabel('Grid X')
+        ax.set_ylabel('Grid Y')
+        
+        # 添加颜色条
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Convergence Intensity', fontweight='bold')
+    
+    # ==================== SNR 独立可视化 ====================
+    
+    def create_snr_only_visualization(self, snr_data, config, num_layer_options, 
+                                    save_path=None, title_suffix=""):
+        """
+        独立的SNR可视化
+        """
+        if not snr_data:
+            print("❌ 没有SNR数据")
+            return None
+        
+        print("🎨 创建SNR独立可视化...")
+        
+        # 创建2x2布局
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig.suptitle(f'SNR Analysis Dashboard{title_suffix}', 
+                    fontsize=18, fontweight='bold', y=0.95)
+        
+        # 1. SNR性能柱状图 (左上)
+        self._create_snr_performance_bar_chart(axes[0, 0], snr_data, config, num_layer_options)
+        
+        # 2. SNR热图 (右上)
+        self._create_snr_heatmap(axes[0, 1], snr_data, config, num_layer_options)
+        
+        # 3. 信噪比分布直方图 (左下)
+        self._create_snr_distribution_histogram(axes[1, 0], snr_data, config)
+        
+        # 4. 对比度分析 (右下)
+        self._create_contrast_analysis(axes[1, 1], snr_data, config, num_layer_options)
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.90)
+        
+        if save_path is None:
+            save_path = os.path.join(config.save_dir, f'snr_analysis{title_suffix}.png')
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.show()
+        
+        print(f"✅ SNR分析已保存: {save_path}")
+        return fig
+    
+    def _create_snr_performance_bar_chart(self, ax, snr_data, config, num_layer_options):
+        """SNR性能柱状图"""
+        # 按模式和层数组织数据
+        modes = list(range(config.num_modes))
+        bar_width = 0.25
+        x_positions = np.arange(len(num_layer_options))
+        colors = ['#3498db', '#e74c3c', '#2ecc71']
+        
+        for mode_idx in modes:
+            snr_values = []
+            for layers in num_layer_options:
+                # 计算该层数和模式下的平均SNR
+                mode_layer_values = []
+                for key, data in snr_data.items():
+                    if self._match_config(key, layers, mode_idx):
+                        if 'snr_db' in data:
+                            # 将dB转换为0-1分数
+                            snr_score = max(0, min(1, data['snr_db'] / 20.0))
+                            mode_layer_values.append(snr_score)
+                
+                avg_snr = np.mean(mode_layer_values) if mode_layer_values else 0
+                snr_values.append(avg_snr)
+            
+            # 创建柱状图
+            bars = ax.bar(x_positions + mode_idx * bar_width, snr_values,
+                        bar_width, label=f'Mode {mode_idx+1}',
+                        color=colors[mode_idx], alpha=0.8, edgecolor='black')
+            
+            # 添加数值标注
+            for bar, value in zip(bars, snr_values):
+                if value > 0:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                        f'{value:.3f}', ha='center', va='bottom',
+                        fontweight='bold', fontsize=9)
+        
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('SNR Score (0-1)', fontsize=12, fontweight='bold')
+        ax.set_title('SNR Performance by Layers and Modes', fontsize=14, fontweight='bold')
+        ax.set_xticks(x_positions + bar_width)
+        ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim(0, 1.0)
+    
+    def _create_snr_heatmap(self, ax, snr_data, config, num_layer_options):
+        """SNR热图"""
+        wavelengths = [int(wl * 1e9) for wl in config.wavelengths]
+        num_modes = config.num_modes
+        
+        # 构建热图数据矩阵
+        fig_data = np.zeros((num_modes * len(wavelengths), len(num_layer_options)))
+        
+        row_labels = []
+        for mode_idx in range(num_modes):
+            for wl_idx, wl in enumerate(wavelengths):
+                row_idx = mode_idx * len(wavelengths) + wl_idx
+                row_labels.append(f'M{mode_idx+1}-{wl}nm')
+                
+                for col_idx, layers in enumerate(num_layer_options):
+                    # 查找匹配的数据
+                    for key, data in snr_data.items():
+                        if self._match_config_full(key, layers, mode_idx, wl):
+                            if 'snr_db' in data:
+                                # 将dB转换为0-1分数
+                                snr_score = max(0, min(1, data['snr_db'] / 20.0))
+                                fig_data[row_idx, col_idx] = snr_score
+                            break
+        
+        # 绘制热图
+        im = ax.imshow(fig_data, cmap='RdYlBu_r', aspect='auto', vmin=0, vmax=1)
+        
+        # 添加数值标注
+        for i in range(fig_data.shape[0]):
+            for j in range(fig_data.shape[1]):
+                value = fig_data[i, j]
+                color = 'white' if value < 0.5 else 'black'
+                ax.text(j, i, f'{value:.3f}', ha='center', va='center',
+                       color=color, fontweight='bold', fontsize=9)
+        
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Mode-Wavelength', fontsize=12, fontweight='bold')
+        ax.set_title('SNR Score Heatmap', fontsize=14, fontweight='bold')
+        ax.set_xticks(range(len(num_layer_options)))
+        ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
+        ax.set_yticks(range(len(row_labels)))
+        ax.set_yticklabels(row_labels, fontsize=8)
+        
+        # 添加颜色条
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('SNR Score', fontweight='bold')
+    
+    def _create_snr_distribution_histogram(self, ax, snr_data, config):
+        """SNR分布直方图"""
+        # 收集所有SNR值
+        snr_db_values = []
+        snr_score_values = []
+        
+        for key, data in snr_data.items():
+            if 'snr_db' in data:
+                snr_db_values.append(data['snr_db'])
+                snr_score_values.append(max(0, min(1, data['snr_db'] / 20.0)))
+        
+        if not snr_db_values:
+            ax.text(0.5, 0.5, 'No SNR Data Available', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 创建双轴直方图
+        ax2 = ax.twinx()
+        
+        # SNR dB分布
+        n1, bins1, patches1 = ax.hist(snr_db_values, bins=20, alpha=0.7, color='skyblue', 
+                                     label='SNR (dB)', edgecolor='black')
+        
+        # SNR Score分布
+        n2, bins2, patches2 = ax2.hist(snr_score_values, bins=20, alpha=0.7, color='lightcoral', 
+                                      label='SNR Score (0-1)', edgecolor='black')
+        
+        # 统计信息
+        mean_db = np.mean(snr_db_values)
+        std_db = np.std(snr_db_values)
+        mean_score = np.mean(snr_score_values)
+        
+        ax.axvline(mean_db, color='blue', linestyle='--', linewidth=2, 
+                  label=f'Mean dB: {mean_db:.2f}')
+        ax2.axvline(mean_score, color='red', linestyle='--', linewidth=2, 
+                   label=f'Mean Score: {mean_score:.3f}')
+        
+        ax.set_xlabel('SNR (dB)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Frequency (dB)', fontsize=12, fontweight='bold', color='blue')
+        ax2.set_ylabel('Frequency (Score)', fontsize=12, fontweight='bold', color='red')
+        ax.set_title(f'SNR Distribution\nMean: {mean_db:.2f}±{std_db:.2f} dB', 
+                    fontsize=14, fontweight='bold')
+        
+        # 图例
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        
+        ax.grid(True, alpha=0.3)
+    
+    def _create_contrast_analysis(self, ax, snr_data, config, num_layer_options):
+        """对比度分析"""
+        # 收集对比度数据
+        contrast_ratios = []
+        signal_powers = []
+        noise_powers = []
+        config_labels = []
+        
+        for key, data in snr_data.items():
+            if all(k in data for k in ['contrast_ratio', 'signal_power', 'noise_power']):
+                contrast_ratios.append(data['contrast_ratio'])
+                signal_powers.append(data['signal_power'])
+                noise_powers.append(data['noise_power'])
+                config_labels.append(key)
+        
+        if not contrast_ratios:
+            ax.text(0.5, 0.5, 'No Contrast Data Available', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 创建散点图：信号功率 vs 对比度比率
+        scatter = ax.scatter(signal_powers, contrast_ratios, 
+                           c=noise_powers, cmap='viridis', 
+                           s=100, alpha=0.7, edgecolors='black')
+        
+        ax.set_xlabel('Signal Power', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Contrast Ratio', fontsize=12, fontweight='bold')
+        ax.set_title('Signal Power vs Contrast Ratio', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # 添加颜色条
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label('Noise Power', fontweight='bold')
+        
+        # 标记最佳点
+        if contrast_ratios:
+            best_idx = np.argmax(contrast_ratios)
+            ax.scatter(signal_powers[best_idx], contrast_ratios[best_idx], 
+                      s=200, c='red', marker='*', edgecolors='black', linewidth=2,
+                      label='Best Contrast')
+            ax.legend()
+    
+    # ==================== 辅助方法 ====================
+    
+    def _match_config(self, key, layers, mode_idx):
+        """匹配配置（层数和模式）"""
+        return (f'layers{layers}' in key or f'L{layers}_' in key) and \
+               (f'mode{mode_idx+1}' in key or f'_M{mode_idx+1}_' in key)
+    
+    def _match_config_full(self, key, layers, mode_idx, wavelength):
+        """完全匹配配置（层数、模式、波长）"""
+        return self._match_config(key, layers, mode_idx) and \
+               f'{wavelength}nm' in key
+    
+    def _contains_wavelength(self, key, wavelength):
+        """检查键是否包含指定波长"""
+        return f'{wavelength}nm' in key
+    
+    # ==================== 批量处理方法 ====================
+    
+    def calculate_separated_dimensions_from_simulation(self, save_dir, config, num_layer_options):
+        """
+        从仿真结果分别计算Cross Matrix和SNR数据
+        """
+        print("🔍 分别计算Cross Matrix和SNR数据...")
+        
+        # 查找所有仿真结果文件
+        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
+        
+        if not result_files:
+            print("❌ 未找到仿真结果文件")
+            return None, None
+        
+        print(f"找到 {len(result_files)} 个仿真结果文件")
+        
+        cross_matrix_data = {}
+        snr_data = {}
+        
+        for file_path in result_files:
+            filename = os.path.basename(file_path)
+            
+            # 提取文件信息
+            file_info = self._extract_file_info(filename)
+            if not file_info:
+                print(f"⚠ 无法解析文件名: {filename}")
+                continue
+            
+            mode_idx, wl_nm, layers = file_info['mode'], file_info['wavelength'], file_info['layers']
+            
+            try:
+                # 加载仿真数据
+                data = np.load(file_path, allow_pickle=True)
+                
+                # 分别计算两个维度
+                cross_result = self.calculate_cross_matrix_intensity(data)
+                snr_result = self.calculate_signal_noise_ratio(data)
+                
+                # 创建友好的键名
+                key_str = f"L{layers}_M{mode_idx+1}_{wl_nm}nm"
+                
+                cross_matrix_data[key_str] = cross_result
+                snr_data[key_str] = snr_result
+                
+                print(f"  {key_str}: Cross={cross_result['focus_concentration']:.3f}, "
+                      f"SNR={snr_result['snr_db']:.2f}dB")
+                
+            except Exception as e:
+                print(f"❌ 处理文件 {filename} 时出错: {e}")
+                continue
+        
+        print(f"成功处理 {len(cross_matrix_data)} 个Cross Matrix数据点")
+        print(f"成功处理 {len(snr_data)} 个SNR数据点")
+        
+        return cross_matrix_data, snr_data
+    
+    def create_separated_analysis_report(self, save_dir, config, num_layer_options):
+        """
+        创建分离的分析报告
+        """
+        print("📊 创建分离的双维度分析报告...")
+        
+        # 计算分离的数据
+        cross_matrix_data, snr_data = self.calculate_separated_dimensions_from_simulation(
+            save_dir, config, num_layer_options)
+        
+        if not cross_matrix_data or not snr_data:
+            print("❌ 数据计算失败")
+            return
+        
+        cross_path = os.path.join(save_dir, 'cross_matrix_analysis_separated.png')
+        self.create_cross_matrix_visualization(cross_matrix_data, config, num_layer_options, 
+                                             cross_path, "_separated")
+        
+        # 创建SNR可视化
+        snr_path = os.path.join(save_dir, 'snr_analysis_separated.png')
+        self.create_snr_only_visualization(snr_data, config, num_layer_options, 
+                                         snr_path, "_separated")
+        
+        # 创建对比分析
+        self.create_dimension_comparison_analysis(cross_matrix_data, snr_data, config, 
+                                                num_layer_options, save_dir)
+        
+        # 保存数据
+        self._save_separated_data(cross_matrix_data, snr_data, save_dir)
+        
+        print("✅ 分离的双维度分析报告创建完成")
+        
+        return cross_matrix_data, snr_data
+    
+    def create_dimension_comparison_analysis(self, cross_matrix_data, snr_data, config, 
+                                           num_layer_options, save_dir):
+        """
+        创建两个维度的对比分析
+        """
+        print("🔍 创建维度对比分析...")
+        
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig.suptitle('Cross Matrix vs SNR Comparison Analysis', 
+                    fontsize=18, fontweight='bold', y=0.95)
+        
+        # 1. 散点图：Cross Matrix vs SNR (左上)
+        self._create_cross_vs_snr_scatter(axes[0, 0], cross_matrix_data, snr_data, config)
+        
+        # 2. 相关性分析 (右上)
+        self._create_correlation_analysis(axes[0, 1], cross_matrix_data, snr_data, config)
+        
+        # 3. 性能排名对比 (左下)
+        self._create_performance_ranking_comparison(axes[1, 0], cross_matrix_data, snr_data, config)
+        
+        # 4. 最佳配置识别 (右下)
+        self._create_optimal_config_identification(axes[1, 1], cross_matrix_data, snr_data, config)
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.90)
+        
+        comparison_path = os.path.join(save_dir, 'dimension_comparison_analysis.png')
+        plt.savefig(comparison_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.show()
+        
+        print(f"✅ 维度对比分析已保存: {comparison_path}")
+    
+    def _create_cross_vs_snr_scatter(self, ax, cross_matrix_data, snr_data, config):
+        """Cross Matrix vs SNR 散点图"""
+        # 匹配数据
+        cross_values = []
+        snr_values = []
+        labels = []
+        colors = []
+        
+        # 颜色映射
+        wavelength_colors = {450: '#1f77b4', 550: '#ff7f0e', 650: '#2ca02c'}
+        
+        for key in cross_matrix_data.keys():
+            if key in snr_data:
+                cross_val = cross_matrix_data[key].get('focus_concentration', 0)
+                snr_val = max(0, min(1, snr_data[key].get('snr_db', 0) / 20.0))
+                
+                cross_values.append(cross_val)
+                snr_values.append(snr_val)
+                labels.append(key)
+                
+                # 根据波长着色
+                color = '#gray'
+                for wl, wl_color in wavelength_colors.items():
+                    if f'{wl}nm' in key:
+                        color = wl_color
+                        break
+                colors.append(color)
+        
+        if not cross_values:
+            ax.text(0.5, 0.5, 'No Matching Data', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 创建散点图
+        scatter = ax.scatter(cross_values, snr_values, c=colors, s=100, 
+                           alpha=0.7, edgecolors='black', linewidth=1)
+        
+        # 添加对角线
+        ax.plot([0, 1], [0, 1], 'r--', alpha=0.5, linewidth=2, label='Equal Performance')
+        
+        # 标注最佳点
+        if cross_values and snr_values:
+            # 综合最佳（欧几里得距离到(1,1)最近）
+            distances = [(1-c)**2 + (1-s)**2 for c, s in zip(cross_values, snr_values)]
+            best_idx = np.argmin(distances)
+            
+            ax.scatter(cross_values[best_idx], snr_values[best_idx], 
+                      s=300, c='red', marker='*', edgecolors='black', linewidth=2,
+                      label=f'Best Overall: {labels[best_idx]}')
+        
+        ax.set_xlabel('Cross Matrix Focus Concentration', fontsize=12, fontweight='bold')
+        ax.set_ylabel('SNR Score (0-1)', fontsize=12, fontweight='bold')
+        ax.set_title('Cross Matrix vs SNR Performance', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        
+        # 添加象限标注
+        ax.text(0.8, 0.8, 'High Cross\nHigh SNR', ha='center', va='center', 
+               bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.7))
+        ax.text(0.2, 0.2, 'Low Cross\nLow SNR', ha='center', va='center',
+               bbox=dict(boxstyle="round,pad=0.3", facecolor='lightcoral', alpha=0.7))
+    
+    def _create_correlation_analysis(self, ax, cross_matrix_data, snr_data, config):
+        """相关性分析"""
+        # 收集匹配的数据
+        cross_values = []
+        snr_values = []
+        
+        for key in cross_matrix_data.keys():
+            if key in snr_data:
+                cross_val = cross_matrix_data[key].get('focus_concentration', 0)
+                snr_val = snr_data[key].get('snr_db', 0)
+                
+                cross_values.append(cross_val)
+                snr_values.append(snr_val)
+        
+        if len(cross_values) < 2:
+            ax.text(0.5, 0.5, 'Insufficient Data for Correlation', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 计算相关系数
+        correlation = np.corrcoef(cross_values, snr_values)[0, 1]
+        
+        # 创建相关性散点图
+        ax.scatter(cross_values, snr_values, alpha=0.6, s=80, edgecolors='black')
+        
+        # 添加趋势线
+        z = np.polyfit(cross_values, snr_values, 1)
+        p = np.poly1d(z)
+        x_trend = np.linspace(min(cross_values), max(cross_values), 100)
+        ax.plot(x_trend, p(x_trend), "r--", alpha=0.8, linewidth=2, 
+               label=f'Trend Line (R={correlation:.3f})')
+        
+        # 统计信息
+        stats_text = f"""
+Correlation Analysis:
+• Correlation Coefficient: {correlation:.3f}
+• Cross Matrix Mean: {np.mean(cross_values):.3f}
+• SNR Mean: {np.mean(snr_values):.2f} dB
+• Data Points: {len(cross_values)}
+        """
+        
+        ax.text(0.05, 0.95, stats_text.strip(), transform=ax.transAxes, 
+               verticalalignment='top', fontsize=10, fontfamily='monospace',
+               bbox=dict(boxstyle="round,pad=0.5", facecolor='lightblue', alpha=0.8))
+        
+        ax.set_xlabel('Cross Matrix Focus Concentration', fontsize=12, fontweight='bold')
+        ax.set_ylabel('SNR (dB)', fontsize=12, fontweight='bold')
+        ax.set_title('Cross Matrix vs SNR Correlation', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+    
+    def _create_performance_ranking_comparison(self, ax, cross_matrix_data, snr_data, config):
+        """性能排名对比"""
+        # 收集数据并排名
+        configs = []
+        cross_ranks = []
+        snr_ranks = []
+        
+        # 获取所有配置的性能数据
+        performance_data = []
+        for key in cross_matrix_data.keys():
+            if key in snr_data:
+                cross_val = cross_matrix_data[key].get('focus_concentration', 0)
+                snr_val = max(0, min(1, snr_data[key].get('snr_db', 0) / 20.0))
+                performance_data.append((key, cross_val, snr_val))
+        
+        if not performance_data:
+            ax.text(0.5, 0.5, 'No Data for Ranking', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 按Cross Matrix排序
+        cross_sorted = sorted(performance_data, key=lambda x: x[1], reverse=True)
+        # 按SNR排序
+        snr_sorted = sorted(performance_data, key=lambda x: x[2], reverse=True)
+        
+        # 计算排名
+        cross_ranking = {item[0]: idx+1 for idx, item in enumerate(cross_sorted)}
+        snr_ranking = {item[0]: idx+1 for idx, item in enumerate(snr_sorted)}
+        
+        # 准备绘图数据
+        for key, cross_val, snr_val in performance_data:
+            configs.append(key.replace('_', '\n'))  # 换行显示
+            cross_ranks.append(cross_ranking[key])
+            snr_ranks.append(snr_ranking[key])
+        
+        # 只显示前10个配置
+        if len(configs) > 10:
+            configs = configs[:10]
+            cross_ranks = cross_ranks[:10]
+            snr_ranks = snr_ranks[:10]
+        
+        x = np.arange(len(configs))
+        width = 0.35
+        
+        # 创建双柱状图
+        bars1 = ax.bar(x - width/2, cross_ranks, width, label='Cross Matrix Rank', 
+                      color='skyblue', alpha=0.8, edgecolor='black')
+        bars2 = ax.bar(x + width/2, snr_ranks, width, label='SNR Rank', 
+                      color='lightcoral', alpha=0.8, edgecolor='black')
+        
+        # 添加数值标注
+        for bar in bars1:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                   f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+        
+        for bar in bars2:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                   f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+        
+        ax.set_xlabel('Configuration', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Rank (1=Best)', fontsize=12, fontweight='bold')
+        ax.set_title('Performance Ranking Comparison', fontsize=14, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(configs, rotation=45, ha='right', fontsize=8)
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.invert_yaxis()  # 1在顶部
+    
+    def _create_optimal_config_identification(self, ax, cross_matrix_data, snr_data, config):
+        """最佳配置识别"""
+        ax.axis('off')
+        
+        # 找到各种"最佳"配置
+        best_configs = {}
+        
+        # 1. Cross Matrix最佳
+        if cross_matrix_data:
+            best_cross_key = max(cross_matrix_data.keys(), 
+                               key=lambda k: cross_matrix_data[k].get('focus_concentration', 0))
+            best_configs['Cross Matrix'] = {
+                'config': best_cross_key,
+                'value': cross_matrix_data[best_cross_key].get('focus_concentration', 0)
+            }
+        
+        # 2. SNR最佳
+        if snr_data:
+            best_snr_key = max(snr_data.keys(), 
+                             key=lambda k: snr_data[k].get('snr_db', 0))
+            best_configs['SNR'] = {
+                'config': best_snr_key,
+                'value': snr_data[best_snr_key].get('snr_db', 0)
+            }
+        
+        # 3. 综合最佳（两个指标的加权平均）
+        if cross_matrix_data and snr_data:
+            composite_scores = {}
+            for key in cross_matrix_data.keys():
+                if key in snr_data:
+                    cross_val = cross_matrix_data[key].get('focus_concentration', 0)
+                    snr_val = max(0, min(1, snr_data[key].get('snr_db', 0) / 20.0))
+                    composite_scores[key] = 0.5 * cross_val + 0.5 * snr_val
+            
+            if composite_scores:
+                best_composite_key = max(composite_scores.keys(), key=composite_scores.get)
+                best_configs['Composite'] = {
+                    'config': best_composite_key,
+                    'value': composite_scores[best_composite_key]
+                }
+        
+        # 创建总结文本
+        summary_text = "🏆 OPTIMAL CONFIGURATION ANALYSIS\n"
+        summary_text += "=" * 50 + "\n\n"
+        
+        for metric, info in best_configs.items():
+            config_name = info['config']
+            value = info['value']
+            
+            if metric == 'Cross Matrix':
+                summary_text += f"🎯 Best {metric}:\n"
+                summary_text += f"   Configuration: {config_name}\n"
+                summary_text += f"   Focus Concentration: {value:.4f}\n\n"
+            elif metric == 'SNR':
+                summary_text += f"📡 Best {metric}:\n"
+                summary_text += f"   Configuration: {config_name}\n"
+                summary_text += f"   SNR: {value:.2f} dB\n\n"
+            elif metric == 'Composite':
+                summary_text += f"⭐ Best {metric} (50% Cross + 50% SNR):\n"
+                summary_text += f"   Configuration: {config_name}\n"
+                summary_text += f"   Composite Score: {value:.4f}\n\n"
+        
+        # 添加推荐
+        if 'Composite' in best_configs:
+            recommended_config = best_configs['Composite']['config']
+            summary_text += f"💡 RECOMMENDATION:\n"
+            summary_text += f"   Use configuration: {recommended_config}\n"
+            summary_text += f"   This provides the best balance between\n"
+            summary_text += f"   convergence intensity and signal quality.\n"
+        
+        # 显示文本
+        ax.text(0.1, 0.9, summary_text, transform=ax.transAxes, fontsize=12,
+               verticalalignment='top', fontfamily='monospace',
+               bbox=dict(boxstyle="round,pad=0.5", facecolor='lightyellow', alpha=0.9))
+        
+        ax.set_title('Optimal Configuration Summary', fontweight='bold', fontsize=16)
+    
+    def _save_separated_data(self, cross_matrix_data, snr_data, save_dir):
+        """保存分离的数据"""
+        print("💾 保存分离的数据...")
+        
+        def convert_numpy_types(obj):
+            """递归转换numpy类型"""
+            if isinstance(obj, dict):
+                return {key: convert_numpy_types(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.bool_):
+                return bool(obj)
+            else:
+                return obj
+        
+        # 保存Cross Matrix数据
+        cross_data_serializable = convert_numpy_types(cross_matrix_data)
+        cross_path = os.path.join(save_dir, 'cross_matrix_data.json')
+        with open(cross_path, 'w', encoding='utf-8') as f:
+            json.dump(cross_data_serializable, f, indent=2, ensure_ascii=False)
+        
+        # 保存SNR数据
+        snr_data_serializable = convert_numpy_types(snr_data)
+        snr_path = os.path.join(save_dir, 'snr_data.json')
+        with open(snr_path, 'w', encoding='utf-8') as f:
+            json.dump(snr_data_serializable, f, indent=2, ensure_ascii=False)
+        
+        print(f"✅ Cross Matrix数据已保存: {cross_path}")
+        print(f"✅ SNR数据已保存: {snr_path}")
+
