@@ -12,7 +12,7 @@ import glob
 from datetime import datetime
 import json
 from pathlib import Path
-
+import pandas as pd
 class Simulator:
     """光场传播仿真器"""
     
@@ -760,7 +760,6 @@ class Simulator:
         
         for file_path in result_files:
             filename = os.path.basename(file_path)
-            print(f"处理文件: {filename}")
             
             # **改进的层数提取方法**
             layers_match = None
@@ -770,14 +769,12 @@ class Simulator:
             layers_search = re.search(layers_pattern, filename)
             if layers_search:
                 layers_match = int(layers_search.group(1))
-                print(f"  通过正则表达式找到层数: {layers_match}")
             else:
                 # 方法2: 如果没有找到，尝试从其他模式推断
                 # 检查常见的层数值
                 for possible_layers in [1, 2, 3, 4, 5, 6, 7, 8]:
                     if f"_{possible_layers}layers_" in filename or f"_{possible_layers}layer_" in filename:
                         layers_match = possible_layers
-                        print(f"  通过字符串匹配找到层数: {layers_match}")
                         break
             
             if not layers_match:
@@ -803,7 +800,6 @@ class Simulator:
             if wl_search:
                 wl_match = int(wl_search.group(1))
             
-            print(f"  提取信息 - 层数: {layers_match}, 模式: {mode_match}, 波长: {wl_match}nm")
             
             if mode_match and wl_match and layers_match:
                 if layers_match not in organized_by_layers:
@@ -811,13 +807,9 @@ class Simulator:
                 
                 key = (mode_match, wl_match)
                 organized_by_layers[layers_match][key] = file_path
-                print(f"  ✓ 已分类到 {layers_match} 层")
             else:
                 print(f"  ❌ 跳过文件 (信息不完整)")
         
-        print(f"\n按层数组织的结果:")
-        for layers, files_dict in organized_by_layers.items():
-            print(f"  {layers}层: {len(files_dict)} 个文件")
         
         if not organized_by_layers:
             print("❌ 没有找到可以按层数分类的文件")
@@ -955,356 +947,3 @@ class Simulator:
         
         print(f"✅ {layers} 层模型汇总图已保存: {summary_path}")
         print(f"   成功加载 {successful_loads}/{len(files_dict)} 个文件")
-
-    def create_detailed_analysis(self, save_dir):
-        """
-        创建详细的分析报告
-        
-        参数:
-            save_dir: 保存目录
-        """
-        print("创建详细分析报告...")
-        
-        # 查找所有仿真结果文件
-        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
-        
-        if not result_files:
-            print("⚠ 未找到仿真结果文件")
-            return
-        
-        analysis_data = {}
-        
-        # 分析每个文件
-        for file_path in result_files:
-            filename = os.path.basename(file_path)
-            
-            # 提取文件信息
-            mode_match = None
-            wl_match = None
-            layers_match = None
-            
-            # 提取模式信息
-            for mode_idx in range(self.config.num_modes):
-                if f"_mode{mode_idx+1}_" in filename:
-                    mode_match = mode_idx + 1
-                    break
-            
-            # 提取波长信息
-            for wl in self.config.wavelengths:
-                wl_nm = int(wl * 1e9)
-                if f"{wl_nm}nm" in filename:
-                    wl_match = wl_nm
-                    break
-            
-            # 提取层数信息
-            import re
-            layers_pattern = r'(\d+)layers'
-            layers_search = re.search(layers_pattern, filename)
-            if layers_search:
-                layers_match = int(layers_search.group(1))
-            
-            if mode_match and wl_match and layers_match:
-                try:
-                    # 加载数据
-                    try:
-                        data = np.load(file_path, allow_pickle=True)
-                    except ValueError:
-                        data = np.load(file_path, allow_pickle=True)
-                    
-                    # 计算强度
-                    if np.iscomplexobj(data):
-                        intensity = np.abs(data)**2
-                    else:
-                        intensity = np.abs(data)
-                    
-                    # 确保是2D数据
-                    if intensity.ndim > 2:
-                        intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
-                    
-                    # 计算分析指标
-                    total_intensity = np.sum(intensity)
-                    peak_intensity = np.max(intensity)
-                    peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
-                    
-                    # 计算质心
-                    H, W = intensity.shape
-                    y_indices, x_indices = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-                    
-                    if total_intensity > 0:
-                        centroid_y = np.sum(y_indices * intensity) / total_intensity
-                        centroid_x = np.sum(x_indices * intensity) / total_intensity
-                    else:
-                        centroid_y, centroid_x = H//2, W//2
-                    
-                    # 计算聚焦效率（中心区域）
-                    center_y, center_x = H//2, W//2
-                    radius = self.config.focus_radius
-                    
-                    y_grid, x_grid = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-                    focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= radius**2
-                    
-                    focus_intensity = np.sum(intensity[focus_mask])
-                    focus_efficiency = focus_intensity / total_intensity if total_intensity > 0 else 0
-                    
-                    # 计算均匀性（标准差）
-                    intensity_std = np.std(intensity)
-                    intensity_mean = np.mean(intensity)
-                    uniformity = intensity_std / intensity_mean if intensity_mean > 0 else 0
-                    
-                    # 存储分析结果
-                    key = (layers_match, mode_match, wl_match)
-                    analysis_data[key] = {
-                        'filename': filename,
-                        'total_intensity': total_intensity,
-                        'peak_intensity': peak_intensity,
-                        'peak_position': peak_pos,
-                        'centroid_position': (centroid_y, centroid_x),
-                        'focus_efficiency': focus_efficiency,
-                        'uniformity': uniformity,
-                        'intensity_std': intensity_std,
-                        'intensity_mean': intensity_mean
-                    }
-                    
-                except Exception as e:
-                    print(f"❌ 分析文件 {filename} 时出错: {e}")
-                    continue
-        
-        if not analysis_data:
-            print("❌ 没有可分析的数据")
-            return
-        
-        # 生成分析报告
-        report_lines = []
-        report_lines.append("="*80)
-        report_lines.append("光场传播仿真详细分析报告")
-        report_lines.append("="*80)
-        report_lines.append(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        report_lines.append(f"分析文件数量: {len(analysis_data)}")
-        report_lines.append("")
-        
-        # 按层数分组分析
-        layers_groups = {}
-        for (layers, mode, wl), data in analysis_data.items():
-            if layers not in layers_groups:
-                layers_groups[layers] = {}
-            if mode not in layers_groups[layers]:
-                layers_groups[layers][mode] = {}
-            layers_groups[layers][mode][wl] = data
-        
-        for layers in sorted(layers_groups.keys()):
-            report_lines.append(f"\n{layers} 层模型分析:")
-            report_lines.append("-" * 50)
-            
-            modes_data = layers_groups[layers]
-            
-            # 计算平均指标
-            all_focus_eff = []
-            all_uniformity = []
-            all_peak_int = []
-            
-            for mode in sorted(modes_data.keys()):
-                report_lines.append(f"\n  模式 {mode}:")
-                
-                wl_data = modes_data[mode]
-                for wl in sorted(wl_data.keys()):
-                    data = wl_data[wl]
-                    
-                    all_focus_eff.append(data['focus_efficiency'])
-                    all_uniformity.append(data['uniformity'])
-                    all_peak_int.append(data['peak_intensity'])
-                    
-                    report_lines.append(f"    {wl}nm:")
-                    report_lines.append(f"      聚焦效率: {data['focus_efficiency']:.4f}")
-                    report_lines.append(f"      峰值强度: {data['peak_intensity']:.6f}")
-                    report_lines.append(f"      峰值位置: {data['peak_position']}")
-                    report_lines.append(f"      质心位置: ({data['centroid_position'][0]:.1f}, {data['centroid_position'][1]:.1f})")
-                    report_lines.append(f"      均匀性: {data['uniformity']:.4f}")
-            
-            # 层级统计
-            if all_focus_eff:
-                report_lines.append(f"\n  {layers}层模型总体统计:")
-                report_lines.append(f"    平均聚焦效率: {np.mean(all_focus_eff):.4f} ± {np.std(all_focus_eff):.4f}")
-                report_lines.append(f"    平均峰值强度: {np.mean(all_peak_int):.6f} ± {np.std(all_peak_int):.6f}")
-                report_lines.append(f"    平均均匀性: {np.mean(all_uniformity):.4f} ± {np.std(all_uniformity):.4f}")
-        
-        # 保存报告
-        report_path = os.path.join(save_dir, 'detailed_analysis_report.txt')
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(report_lines))
-        
-        # 打印报告
-        for line in report_lines:
-            print(line)
-        
-        print(f"\n✅ 详细分析报告已保存到: {report_path}")
-        
-        # 保存分析数据为JSON
-        json_data = {}
-        for (layers, mode, wl), data in analysis_data.items():
-            key = f"{layers}layers_mode{mode}_{wl}nm"
-            # 转换numpy类型为Python原生类型
-            json_data[key] = {
-                k: float(v) if isinstance(v, (np.ndarray, np.number)) else 
-                   [float(x) for x in v] if isinstance(v, (list, tuple)) else v
-                for k, v in data.items()
-            }
-        
-        json_path = os.path.join(save_dir, 'detailed_analysis_data.json')
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, indent=2, ensure_ascii=False)
-        
-        print(f"✅ 分析数据已保存到: {json_path}")
-    
-    def create_performance_comparison(self, save_dir):
-        """
-        Create performance comparison figures for different layer models
-        
-        参数:
-            save_dir: 保存目录
-        """
-        import matplotlib.pyplot as plt
-        
-        print("创建性能对比图...")
-        
-        # 加载分析数据
-        json_path = os.path.join(save_dir, 'detailed_analysis_data.json')
-        if not os.path.exists(json_path):
-            print("⚠ 未找到分析数据文件，请先运行详细分析")
-            return
-        
-        with open(json_path, 'r', encoding='utf-8') as f:
-            analysis_data = json.load(f)
-        
-        # 组织数据
-        layers_performance = {}
-        
-        for key, data in analysis_data.items():
-            # 解析键
-            parts = key.split('_')
-            layers_str = parts[0]  # e.g., "3layers"
-            layers = int(layers_str.replace('layers', ''))
-            
-            if layers not in layers_performance:
-                layers_performance[layers] = {
-                    'focus_efficiency': [],
-                    'peak_intensity': [],
-                    'uniformity': []
-                }
-            
-            layers_performance[layers]['focus_efficiency'].append(data['focus_efficiency'])
-            layers_performance[layers]['peak_intensity'].append(data['peak_intensity'])
-            layers_performance[layers]['uniformity'].append(data['uniformity'])
-        
-        if not layers_performance:
-            print("❌ 没有可用的性能数据")
-            return
-        
-        # 创建对比图
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        
-        layers_list = sorted(layers_performance.keys())
-        
-        # 1. 聚焦效率对比
-        ax1 = axes[0, 0]
-        focus_means = [np.mean(layers_performance[l]['focus_efficiency']) for l in layers_list]
-        focus_stds = [np.std(layers_performance[l]['focus_efficiency']) for l in layers_list]
-        
-        ax1.bar(range(len(layers_list)), focus_means, yerr=focus_stds, 
-                capsize=5, alpha=0.7, color='skyblue')
-        ax1.set_xlabel('层数')
-        ax1.set_ylabel('聚焦效率')
-        ax1.set_title('不同层数模型的聚焦效率对比')
-        ax1.set_xticks(range(len(layers_list)))
-        ax1.set_xticklabels([f'{l}层' for l in layers_list])
-        ax1.grid(True, alpha=0.3)
-        
-        # 2. 峰值强度对比
-        ax2 = axes[0, 1]
-        peak_means = [np.mean(layers_performance[l]['peak_intensity']) for l in layers_list]
-        peak_stds = [np.std(layers_performance[l]['peak_intensity']) for l in layers_list]
-        
-        ax2.bar(range(len(layers_list)), peak_means, yerr=peak_stds, 
-                capsize=5, alpha=0.7, color='lightcoral')
-        ax2.set_xlabel('层数')
-        ax2.set_ylabel('峰值强度')
-        ax2.set_title('不同层数模型的峰值强度对比')
-        ax2.set_xticks(range(len(layers_list)))
-        ax2.set_xticklabels([f'{l}层' for l in layers_list])
-        ax2.grid(True, alpha=0.3)
-        
-        # 3. 均匀性对比
-        ax3 = axes[1, 0]
-        uniformity_means = [np.mean(layers_performance[l]['uniformity']) for l in layers_list]
-        uniformity_stds = [np.std(layers_performance[l]['uniformity']) for l in layers_list]
-        
-        ax3.bar(range(len(layers_list)), uniformity_means, yerr=uniformity_stds, 
-                capsize=5, alpha=0.7, color='lightgreen')
-        ax3.set_xlabel('层数')
-        ax3.set_ylabel('均匀性 (标准差/均值)')
-        ax3.set_title('不同层数模型的均匀性对比')
-        ax3.set_xticks(range(len(layers_list)))
-        ax3.set_xticklabels([f'{l}层' for l in layers_list])
-        ax3.grid(True, alpha=0.3)
-        
-        # 4. 综合性能雷达图
-        ax4 = axes[1, 1]
-        
-        # 归一化指标（0-1范围）
-        focus_norm = [(f - min(focus_means)) / (max(focus_means) - min(focus_means)) if max(focus_means) > min(focus_means) else 0.5 for f in focus_means]
-        peak_norm = [(p - min(peak_means)) / (max(peak_means) - min(peak_means)) if max(peak_means) > min(peak_means) else 0.5 for p in peak_means]
-        # 均匀性越小越好，所以需要反转
-        uniformity_norm = [1 - (u - min(uniformity_means)) / (max(uniformity_means) - min(uniformity_means)) if max(uniformity_means) > min(uniformity_means) else 0.5 for u in uniformity_means]
-        
-        x = np.arange(len(layers_list))
-        width = 0.25
-        
-        ax4.bar(x - width, focus_norm, width, label='聚焦效率', alpha=0.7)
-        ax4.bar(x, peak_norm, width, label='峰值强度', alpha=0.7)
-        ax4.bar(x + width, uniformity_norm, width, label='均匀性(反转)', alpha=0.7)
-        
-        ax4.set_xlabel('层数')
-        ax4.set_ylabel('归一化性能 (0-1)')
-        ax4.set_title('综合性能对比 (归一化)')
-        ax4.set_xticks(x)
-        ax4.set_xticklabels([f'{l}层' for l in layers_list])
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        # 保存对比图
-        comparison_path = os.path.join(save_dir, 'performance_comparison.png')
-        plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
-        plt.show()
-        
-        print(f"✅ 性能对比图已保存到: {comparison_path}")
-        
-        # 生成性能总结
-        print("\n📊 性能总结:")
-        print("-" * 50)
-        
-        best_focus_layer = layers_list[np.argmax(focus_means)]
-        best_peak_layer = layers_list[np.argmax(peak_means)]
-        best_uniformity_layer = layers_list[np.argmin(uniformity_means)]
-        
-        print(f"最佳聚焦效率: {best_focus_layer}层 ({max(focus_means):.4f})")
-        print(f"最佳峰值强度: {best_peak_layer}层 ({max(peak_means):.6f})")
-        print(f"最佳均匀性: {best_uniformity_layer}层 ({min(uniformity_means):.4f})")
-        
-        # 计算综合得分
-        comprehensive_scores = []
-        for i, layers in enumerate(layers_list):
-            score = (focus_norm[i] + peak_norm[i] + uniformity_norm[i]) / 3
-            comprehensive_scores.append(score)
-        
-        best_comprehensive_idx = np.argmax(comprehensive_scores)
-        best_comprehensive_layer = layers_list[best_comprehensive_idx]
-        
-        print(f"综合性能最佳: {best_comprehensive_layer}层 (得分: {max(comprehensive_scores):.4f})")
-        score = (focus_norm[i] + peak_norm[i] + uniformity_norm[i]) / 3
-        comprehensive_scores.append(score)
-    
-        best_comprehensive_idx = np.argmax(comprehensive_scores)
-        best_comprehensive_layer = layers_list[best_comprehensive_idx]
-        
-        print(f"综合性能最佳: {best_comprehensive_layer}层 (得分: {max(comprehensive_scores):.4f})")

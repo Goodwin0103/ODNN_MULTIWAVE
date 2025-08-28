@@ -27,70 +27,11 @@ class Visualizer:
             'heatmap': 'RdYlBu_r',
             'intensity': 'hot'
         }
-    
-    def calculate_visibility_from_simulation_results(self, save_dir, config, num_layer_options):
-        """
-        从传播仿真结果计算真实的 visibility
-        
-        参数:
-            save_dir: 仿真结果保存目录
-            config: 配置对象
-            num_layer_options: 层数选项列表
-        
-        返回:
-            dict: 按模式组织的 visibility 数据
-        """
-        print("🔍 从传播仿真结果计算真实 visibility...")
-        
-        # 查找所有仿真结果文件
-        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
-        
-        if not result_files:
-            print("❌ 未找到仿真结果文件")
-            return None
-        
-        print(f"找到 {len(result_files)} 个仿真结果文件")
-        
-        # 组织数据结构
-        visibility_data = {}
-        
-        for file_path in result_files:
-            filename = os.path.basename(file_path)
-            
-            # 提取文件信息
-            file_info = self._extract_file_info(filename)
-            if not file_info:
-                print(f"⚠ 无法解析文件名: {filename}")
-                continue
-            
-            mode_idx, wl_nm, layers = file_info['mode'], file_info['wavelength'], file_info['layers']
-            
-            try:
-                # 加载仿真数据
-                data = np.load(file_path, allow_pickle=True)
-                
-                # 计算真实的 visibility (聚焦效率)
-                visibility = self._calculate_focus_efficiency(data)
-                
-                # 存储数据
-                key = (layers, mode_idx, wl_nm)
-                visibility_data[key] = visibility
-                
-                print(f"  {layers}层, 模式{mode_idx}, {wl_nm}nm: visibility = {visibility:.4f}")
-                
-            except Exception as e:
-                print(f"❌ 处理文件 {filename} 时出错: {e}")
-                continue
-        
-        print(f"成功处理 {len(visibility_data)} 个数据点")
-        
-        # 按模式重新组织数据
-        organized_data = self._reorganize_visibility_by_mode(visibility_data, config, num_layer_options)
-        
-        return organized_data
 
+    # ==================== 缺失的辅助方法 ====================
+    
     def _extract_file_info(self, filename):
-        """修复版文件名解析 - 处理1-based模式索引"""
+        """解析文件名提取配置信息"""
         print(f"🔍 解析文件名: {filename}")
         
         # 提取模式 - 支持1-based索引
@@ -106,27 +47,23 @@ class Visualizer:
         for pattern in mode_patterns:
             mode_match = re.search(pattern, filename, re.IGNORECASE)
             if mode_match:
-                # 关键修复：将1-based转换为0-based
-                mode_idx = int(mode_match.group(1)) - 1  # 减1转换为0-based
-                print(f"  模式匹配: {pattern} -> 原值={int(mode_match.group(1))}, 转换后={mode_idx}")
+                # 将1-based转换为0-based
+                mode_idx = int(mode_match.group(1)) - 1
                 break
         
         if mode_idx is None:
-            print(f"  ❌ 无法提取模式信息")
             return None
         
         # 检查转换后的模式索引范围
-        if mode_idx < 0 or mode_idx >= 3:  # 0-based: 0,1,2
+        if mode_idx < 0 or mode_idx >= 3:
             print(f"  ⚠ 转换后模式索引超出范围: {mode_idx}")
         
         # 提取波长
         wl_match = re.search(r'(\d+)nm', filename)
         if not wl_match:
-            print(f"  ❌ 无法提取波长信息")
             return None
         
         wl_nm = int(wl_match.group(1))
-        print(f"  波长匹配: {wl_nm}nm")
         
         # 提取层数
         layer_patterns = [
@@ -141,78 +78,25 @@ class Visualizer:
             layer_match = re.search(pattern, filename, re.IGNORECASE)
             if layer_match:
                 layers = int(layer_match.group(1))
-                print(f"  层数匹配: {pattern} -> {layers}")
                 break
         
         if layers is None:
-            print(f"  ❌ 无法提取层数信息")
             return None
         
         result = {
-            'mode': mode_idx,      # 现在是0-based
+            'mode': mode_idx,      # 0-based
             'wavelength': wl_nm,
             'layers': layers
         }
         
-        print(f"  ✅ 解析结果: {result}")
         return result
 
-    def _calculate_focus_efficiency(self, field_data):
-        """
-        从场数据计算聚焦效率
-        
-        参数:
-            field_data: 复数场数据或强度数据
-        
-        返回:
-            float: 聚焦效率 (0-1)
-        """
-        # 计算强度
-        if np.iscomplexobj(field_data):
-            intensity = np.abs(field_data)**2
-        else:
-            intensity = np.abs(field_data)**2
-        
-        # 处理多维数据
-        if intensity.ndim > 2:
-            # 对前面的维度求和，保留最后两个空间维度
-            intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
-        
-        # 确保是2D数组
-        if intensity.ndim != 2:
-            print(f"⚠ 数据维度异常: {intensity.shape}")
-            return 0.0
-        
-        # 归一化
-        max_intensity = np.max(intensity)
-        if max_intensity > 0:
-            intensity = intensity / max_intensity
-        else:
-            return 0.0
-        
-        # 计算聚焦效率（中心区域能量占比）
-        H, W = intensity.shape
-        center_y, center_x = H // 2, W // 2
-        
-        # 定义聚焦区域（可调整）
-        focus_radius = min(H, W) // 8  # 聚焦区域半径
-        
-        y_grid, x_grid = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-        focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= focus_radius**2
-        
-        total_intensity = np.sum(intensity)
-        focus_intensity = np.sum(intensity[focus_mask])
-        
-        focus_efficiency = focus_intensity / total_intensity if total_intensity > 0 else 0
-        
-        return focus_efficiency
-
     def _reorganize_visibility_by_mode(self, visibility_data, config, num_layer_options):
-        """重新按模式组织 visibility 数据 - 修复版"""
+        """重新按模式组织 visibility 数据"""
         
         organized_data = []
         
-        print(f"\n🔄 重新组织数据 (修复版):")
+        print(f"\n🔄 重新组织数据:")
         print(f"  配置: {config.num_modes} 个模式, {len(num_layer_options)} 个层数选项")
         print(f"  可见性数据键值数量: {len(visibility_data)}")
         
@@ -233,7 +117,7 @@ class Visualizer:
                 
                 for wl in config.wavelengths:
                     wl_nm = int(wl * 1e9)
-                    key = (layers, mode_idx+1, wl_nm)  # 现在使用0-based模式索引
+                    key = (layers, mode_idx, wl_nm)  # 使用0-based模式索引
                     
                     if key in visibility_data:
                         visibility = visibility_data[key]
@@ -261,126 +145,357 @@ class Visualizer:
         
         return organized_data
 
-    def create_visibility_comparison(self, original_visibility, real_visibility, config, num_layer_options, save_path):
+    # ==================== 双维度可见度计算方法 ====================
+    
+    def calculate_cross_matrix_intensity(self, field_data, grid_size=8):
         """
-        创建原始 visibility 和真实 visibility 的对比分析
+        维度1：计算Cross Matrix - 每个区域内的汇聚强度
         """
-        print("创建 Visibility 对比分析图...")
+        # 基础处理
+        if np.iscomplexobj(field_data):
+            intensity = np.abs(field_data)**2
+        else:
+            intensity = np.abs(field_data)**2
         
-        fig, axes = plt.subplots(2, config.num_modes, figsize=(5*config.num_modes, 10))
+        # 处理多维数据
+        if intensity.ndim > 2:
+            intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
         
-        if config.num_modes == 1:
-            axes = axes.reshape(-1, 1)
+        if intensity.ndim != 2:
+            return {'cross_matrix': np.zeros((grid_size, grid_size)), 'max_intensity': 0, 'focus_region': (0, 0)}
         
-        wavelength_labels = [f'{int(wl*1e9)}nm' for wl in config.wavelengths]
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        H, W = intensity.shape
         
-        for mode_idx in range(config.num_modes):
-            # 上排：原始 visibility（基于权重预测）
-            ax1 = axes[0, mode_idx]
-            
-            # 处理原始数据
-            if isinstance(original_visibility, list) and len(original_visibility) > mode_idx:
-                original_data = np.array(original_visibility[mode_idx])
-                if original_data.ndim == 1:
-                    # 如果是1D数组，假设是单波长数据
-                    original_data = original_data.reshape(-1, 1)
-            else:
-                # 如果没有原始数据，创建零数组
-                original_data = np.zeros((len(num_layer_options), len(wavelength_labels)))
-            
-            for wl_idx, wl_label in enumerate(wavelength_labels):
-                if wl_idx < original_data.shape[1]:
-                    color = colors[wl_idx % len(colors)]
-                    ax1.plot(num_layer_options, original_data[:, wl_idx], 
-                            'o-', label=wl_label, linewidth=2, markersize=6, color=color)
-                    
-                    # 标注数值
-                    for layer_idx, layer_num in enumerate(num_layer_options):
-                        if layer_idx < len(original_data):
-                            value = original_data[layer_idx, wl_idx]
-                            ax1.annotate(f'{value:.3f}', 
-                                       (layer_num, value), 
-                                       textcoords="offset points", 
-                                       xytext=(0,10), ha='center', fontsize=8)
-            
-            ax1.set_title(f'模式 {mode_idx+1} - 原始 Visibility (权重预测)', fontweight='bold', fontsize=12)
-            ax1.set_xlabel('层数', fontsize=10)
-            ax1.set_ylabel('Visibility', fontsize=10)
-            ax1.legend(fontsize=9)
-            ax1.grid(True, alpha=0.3)
-            ax1.set_ylim(0, 1.1)
-            ax1.set_xticks(num_layer_options)
-            
-            # 下排：真实 visibility（基于仿真结果）
-            ax2 = axes[1, mode_idx]
-            
-            if real_visibility and len(real_visibility) > mode_idx:
-                real_data = np.array(real_visibility[mode_idx])
-                if real_data.ndim == 1:
-                    real_data = real_data.reshape(-1, 1)
-            else:
-                real_data = np.zeros((len(num_layer_options), len(wavelength_labels)))
-            
-            for wl_idx, wl_label in enumerate(wavelength_labels):
-                if wl_idx < real_data.shape[1]:
-                    color = colors[wl_idx % len(colors)]
-                    ax2.plot(num_layer_options, real_data[:, wl_idx], 
-                            's-', label=wl_label, linewidth=2, markersize=6, color=color)
-                    
-                    # 标注数值
-                    for layer_idx, layer_num in enumerate(num_layer_options):
-                        if layer_idx < len(real_data):
-                            value = real_data[layer_idx, wl_idx]
-                            ax2.annotate(f'{value:.3f}', 
-                                       (layer_num, value), 
-                                       textcoords="offset points", 
-                                       xytext=(0,10), ha='center', fontsize=8)
-            
-            ax2.set_title(f'模式 {mode_idx+1} - 真实 Visibility (仿真结果)', fontweight='bold', fontsize=12)
-            ax2.set_xlabel('层数', fontsize=10)
-            ax2.set_ylabel('Visibility', fontsize=10)
-            ax2.legend(fontsize=9)
-            ax2.grid(True, alpha=0.3)
-            ax2.set_ylim(0, 1.1)
-            ax2.set_xticks(num_layer_options)
+        # 归一化强度
+        max_intensity = np.max(intensity)
+        if max_intensity <= 0:
+            return {'cross_matrix': np.zeros((grid_size, grid_size)), 'max_intensity': 0, 'focus_region': (0, 0)}
         
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-        plt.show()
+        intensity_norm = intensity / max_intensity
         
-        print(f"✅ Visibility 对比分析图已保存: {save_path}")
+        # 创建网格
+        cross_matrix = np.zeros((grid_size, grid_size))
+        
+        # 计算每个网格区域的尺寸
+        region_h = H // grid_size
+        region_w = W // grid_size
+        
+        # 遍历每个网格区域
+        for i in range(grid_size):
+            for j in range(grid_size):
+                # 计算区域边界
+                start_h = i * region_h
+                end_h = min((i + 1) * region_h, H)
+                start_w = j * region_w
+                end_w = min((j + 1) * region_w, W)
+                
+                # 提取区域
+                region = intensity_norm[start_h:end_h, start_w:end_w]
+                
+                # 计算区域内的汇聚强度
+                region_total = np.sum(region)
+                region_max = np.max(region)
+                region_mean = np.mean(region)
+                
+                # 汇聚强度 = 总强度 × 峰值强度 × 集中度
+                concentration_factor = region_max / (region_mean + 1e-10)
+                cross_matrix[i, j] = region_total * region_max * min(concentration_factor / 5.0, 1.0)
+        
+        # 找到最强汇聚区域
+        max_region_idx = np.unravel_index(np.argmax(cross_matrix), cross_matrix.shape)
+        
+        # 计算整体汇聚强度指标
+        total_cross_intensity = np.sum(cross_matrix)
+        max_cross_intensity = np.max(cross_matrix)
+        
+        # 汇聚集中度：最强区域占总强度的比例
+        focus_concentration = max_cross_intensity / (total_cross_intensity + 1e-10)
+        
+        return {
+            'cross_matrix': cross_matrix,
+            'max_intensity': max_cross_intensity,
+            'total_intensity': total_cross_intensity,
+            'focus_concentration': focus_concentration,
+            'focus_region': max_region_idx,
+            'grid_size': grid_size
+        }
 
+    def calculate_signal_noise_ratio(self, field_data, target_region_ratio=0.25):
+        """
+        维度2：计算目标区域和背景区域的信噪比
+        """
+        # 基础处理
+        if np.iscomplexobj(field_data):
+            intensity = np.abs(field_data)**2
+        else:
+            intensity = np.abs(field_data)**2
+        
+        if intensity.ndim > 2:
+            intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
+        
+        if intensity.ndim != 2:
+            return {'snr_db': 0, 'signal_power': 0, 'noise_power': 0, 'contrast_ratio': 1}
+        
+        H, W = intensity.shape
+        
+        # 归一化
+        max_intensity = np.max(intensity)
+        if max_intensity <= 0:
+            return {'snr_db': 0, 'signal_power': 0, 'noise_power': 0, 'contrast_ratio': 1}
+        
+        intensity_norm = intensity / max_intensity
+        
+        # 基于峰值位置的目标区域定义
+        peak_pos = np.unravel_index(np.argmax(intensity), intensity.shape)
+        peak_y, peak_x = peak_pos
+        
+        # 计算目标区域半径
+        target_area = H * W * target_region_ratio
+        target_radius = int(np.sqrt(target_area / np.pi))
+        target_radius = max(target_radius, min(H, W) // 8)
+        
+        # 创建目标区域掩码
+        y_grid, x_grid = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+        target_mask = ((y_grid - peak_y)**2 + (x_grid - peak_x)**2) <= target_radius**2
+        
+        # 基于强度阈值的自适应目标区域
+        threshold = np.percentile(intensity_norm.flatten(), 90)  # 前10%的强度作为信号
+        adaptive_target_mask = intensity_norm >= threshold
+        
+        # 选择更合适的目标区域
+        if np.sum(adaptive_target_mask) > 0.05 * H * W:
+            final_target_mask = adaptive_target_mask
+        else:
+            final_target_mask = target_mask
+        
+        # 背景区域 = 非目标区域
+        background_mask = ~final_target_mask
+        
+        # 计算信号和噪声功率
+        signal_region = intensity_norm[final_target_mask]
+        noise_region = intensity_norm[background_mask]
+        
+        if len(signal_region) == 0 or len(noise_region) == 0:
+            return {'snr_db': 0, 'signal_power': 0, 'noise_power': 0, 'contrast_ratio': 1}
+        
+        # 信号功率：目标区域的平均强度
+        signal_power = np.mean(signal_region)
+        
+        # 噪声功率：背景区域的平均强度
+        noise_power = np.mean(noise_region)
+        
+        # 信噪比计算
+        snr_linear = signal_power / (noise_power + 1e-10)
+        snr_db = 10 * np.log10(snr_linear + 1e-10)
+        
+        # 对比度比率
+        contrast_ratio = signal_power / (noise_power + 1e-10)
+        
+        # 峰值信噪比
+        peak_signal = np.max(signal_region)
+        peak_snr_linear = peak_signal / (noise_power + 1e-10)
+        peak_snr_db = 10 * np.log10(peak_snr_linear + 1e-10)
+        
+        return {
+            'snr_db': snr_db,
+            'peak_snr_db': peak_snr_db,
+            'signal_power': signal_power,
+            'noise_power': noise_power,
+            'contrast_ratio': contrast_ratio,
+            'signal_region_size': len(signal_region),
+            'background_region_size': len(noise_region),
+            'target_mask': final_target_mask,
+            'background_mask': background_mask
+        }
+
+    def calculate_dual_dimension_visibility(self, field_data, grid_size=8, target_region_ratio=0.25):
+        """
+        计算双维度可见度：Cross Matrix + SNR
+        """
+        print("🔍 计算双维度可见度...")
+        
+        # 维度1: Cross Matrix 汇聚强度
+        cross_matrix_result = self.calculate_cross_matrix_intensity(field_data, grid_size)
+        
+        # 维度2: 信噪比
+        snr_result = self.calculate_signal_noise_ratio(field_data, target_region_ratio)
+        
+        # 综合评分
+        # 维度1评分：基于汇聚集中度
+        cross_score = min(cross_matrix_result['focus_concentration'], 1.0)
+        
+        # 维度2评分：基于信噪比（dB转换为0-1分数）
+        snr_db = snr_result['snr_db']
+        snr_score = min(max(snr_db / 20.0, 0), 1.0)  # 20dB对应满分
+        
+        # 综合可见度 = 两个维度的加权平均
+        comprehensive_visibility = cross_score * 0.5 + snr_score * 0.5
+        
+        return {
+            'cross_matrix': cross_matrix_result,
+            'snr': snr_result,
+            'scores': {
+                'cross_score': cross_score,
+                'snr_score': snr_score,
+                'comprehensive': comprehensive_visibility
+            },
+            'summary': {
+                'focus_concentration': cross_matrix_result['focus_concentration'],
+                'snr_db': snr_result['snr_db'],
+                'contrast_ratio': snr_result['contrast_ratio'],
+                'comprehensive_visibility': comprehensive_visibility
+            }
+        }
+
+    def calculate_dual_visibility_from_simulation_results(self, save_dir, config, num_layer_options):
+        """
+        从传播仿真结果计算双维度可见度
+        """
+        print("🔍 从传播仿真结果计算双维度可见度...")
+        
+        # 查找所有仿真结果文件
+        result_files = glob.glob(os.path.join(save_dir, "MC_single_*.npy"))
+        
+        if not result_files:
+            print("❌ 未找到仿真结果文件")
+            return None
+        
+        print(f"找到 {len(result_files)} 个仿真结果文件")
+        
+        # 组织数据结构
+        dual_visibility_data = {}
+        
+        for file_path in result_files:
+            filename = os.path.basename(file_path)
+            
+            # 提取文件信息
+            file_info = self._extract_file_info(filename)
+            if not file_info:
+                print(f"⚠ 无法解析文件名: {filename}")
+                continue
+            
+            mode_idx, wl_nm, layers = file_info['mode'], file_info['wavelength'], file_info['layers']
+            
+            try:
+                # 加载仿真数据
+                data = np.load(file_path, allow_pickle=True)
+                
+                # 计算双维度可见度
+                dual_result = self.calculate_dual_dimension_visibility(data)
+                
+                # 存储数据
+                key = (layers, mode_idx, wl_nm)
+                dual_visibility_data[key] = dual_result
+                
+                print(f"  {layers}层, 模式{mode_idx}, {wl_nm}nm: "
+                      f"Cross={dual_result['scores']['cross_score']:.3f}, "
+                      f"SNR={dual_result['scores']['snr_score']:.3f}, "
+                      f"综合={dual_result['scores']['comprehensive']:.3f}")
+                
+            except Exception as e:
+                print(f"❌ 处理文件 {filename} 时出错: {e}")
+                continue
+        
+        print(f"成功处理 {len(dual_visibility_data)} 个数据点")
+        
+        return dual_visibility_data
+
+    def calculate_visibility_from_simulation_results(self, save_dir, config, num_layer_options):
+        """
+        修改版：使用双维度可见度计算
+        """
+        print("🔍 从传播仿真结果计算双维度可见度...")
+        
+        # 首先计算双维度数据
+        dual_data = self.calculate_dual_visibility_from_simulation_results(save_dir, config, num_layer_options)
+        
+        if not dual_data:
+            return None
+        
+        # 提取综合可见度用于兼容现有接口
+        visibility_data = {}
+        for key, result in dual_data.items():
+            visibility_data[key] = result['scores']['comprehensive']
+        
+        # 按模式重新组织数据
+        organized_data = self._reorganize_visibility_by_mode(visibility_data, config, num_layer_options)
+        
+        # 同时保存双维度数据供详细分析使用
+        self._save_dual_dimension_data(dual_data, save_dir)
+        
+        return organized_data
+
+    def _save_dual_dimension_data(self, dual_data, save_dir):
+        """
+        保存双维度可见度数据到JSON文件
+        直接转换numpy类型，无需自定义编码器
+        """
+        print("💾 保存双维度可见度数据...")
+        
+        def convert_numpy_types(obj):
+            """递归转换numpy类型为Python原生类型"""
+            if isinstance(obj, dict):
+                return {key: convert_numpy_types(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(item) for item in obj]
+            elif isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.bool_):
+                return bool(obj)
+            else:
+                return obj
+        
+        # 转换数据为JSON可序列化格式
+        dual_data_serializable = {}
+        
+        for key, result in dual_data.items():
+            layers, mode_idx, wl_nm = key
+            key_str = f"{int(layers)}L_mode{int(mode_idx)+1}_{int(wl_nm)}nm"
+            
+            # 使用递归函数转换整个结果字典
+            dual_data_serializable[key_str] = convert_numpy_types(result)
+        
+        # 保存到文件
+        data_path = os.path.join(save_dir, 'dual_dimension_visibility_data.json')
+        try:
+            with open(data_path, 'w', encoding='utf-8') as f:
+                json.dump(dual_data_serializable, f, indent=2, ensure_ascii=False)
+            print(f"✅ 双维度数据已保存: {data_path}")
+        except Exception as e:
+            print(f"❌ 保存双维度数据失败: {e}")
+
+    # ==================== 其他必要的方法 ====================
+    
     def organize_visibility_by_mode(self, results, config, num_layer_options):
         """
-        Organize visibility data by mode: each mode's performance across different wavelengths and layer numbers
-        
-        Based on debug info, data structure is:
-        results['visibility'][layer_idx] = [mode0_vis, mode1_vis, mode2_vis]
-        Each value corresponds to the visibility of that mode at that layer number (450nm wavelength only)
+        组织可见度数据按模式
         """
-        print("📊 Organizing visibility data by mode...")
+        print("📊 组织可见度数据按模式...")
         
         num_modes = config.num_modes
         num_wavelengths = len(config.wavelengths)
         vis_data = results['visibility']
         
-        print(f"Configuration: {num_modes} modes, {num_wavelengths} wavelengths, {len(num_layer_options)} layer options")
-        print(f"Raw data structure: {[len(layer_data) for layer_data in vis_data]}")
+        print(f"配置: {num_modes} 模式, {num_wavelengths} 波长, {len(num_layer_options)} 层选项")
+        print(f"原始数据结构: {[len(layer_data) for layer_data in vis_data]}")
         
-        # Check data structure
+        # 检查数据结构
         if len(vis_data[0]) == num_modes:
-            print("✅ Detected: Single wavelength data (450nm), others set to 0")
+            print("✅ 检测到: 单波长数据 (450nm), 其他设为0")
             return self._organize_single_wavelength_data(vis_data, num_modes, num_wavelengths, num_layer_options)
         elif len(vis_data[0]) == num_modes * num_wavelengths:
-            print("✅ Detected: Complete multi-wavelength data")
+            print("✅ 检测到: 完整多波长数据")
             return self._organize_multi_wavelength_data(vis_data, num_modes, num_wavelengths, num_layer_options)
         else:
-            print("⚠ Data structure mismatch, recalculating from weights_pred")
+            print("⚠ 数据结构不匹配，从weights_pred重新计算")
             return self._recalculate_from_weights(results, config, num_layer_options)
     
     def _organize_single_wavelength_data(self, vis_data, num_modes, num_wavelengths, num_layer_options):
-        """Handle single wavelength data (current situation)"""
+        """处理单波长数据"""
         visibility_by_mode = []
         
         for mode_idx in range(num_modes):
@@ -389,16 +504,16 @@ class Visualizer:
             for layer_idx in range(len(num_layer_options)):
                 wavelength_vis = []
                 
-                # First wavelength (450nm) - actual data
+                # 第一个波长 (450nm) - 实际数据
                 if layer_idx < len(vis_data) and mode_idx < len(vis_data[layer_idx]):
                     actual_vis = vis_data[layer_idx][mode_idx]
                 else:
                     actual_vis = 0.0
                 wavelength_vis.append(actual_vis)
                 
-                # Other wavelengths - set to 0 or estimate
+                # 其他波长 - 设为0或估计
                 for wl_idx in range(1, num_wavelengths):
-                    wavelength_vis.append(0.0)  # Set to 0 for missing wavelengths
+                    wavelength_vis.append(0.0)
                 
                 mode_visibility.append(wavelength_vis)
             
@@ -407,7 +522,7 @@ class Visualizer:
         return visibility_by_mode
     
     def _organize_multi_wavelength_data(self, vis_data, num_modes, num_wavelengths, num_layer_options):
-        """Handle complete multi-wavelength data"""
+        """处理完整多波长数据"""
         visibility_by_mode = []
         
         for mode_idx in range(num_modes):
@@ -433,18 +548,16 @@ class Visualizer:
         return visibility_by_mode
     
     def _recalculate_from_weights(self, results, config, num_layer_options):
-        """Recalculate visibility from weights_pred if available"""
+        """从weights_pred重新计算可见度"""
         if 'weights_pred' not in results:
-            print("❌ No weights_pred data available for recalculation")
+            print("❌ 没有weights_pred数据可用于重新计算")
             return self._create_empty_visibility_data(config.num_modes, len(config.wavelengths), len(num_layer_options))
         
-        print("🔄 Recalculating visibility from weights_pred...")
-        # This would need to be implemented based on your specific calculation method
-        # For now, return empty data
+        print("🔄 从weights_pred重新计算可见度...")
         return self._create_empty_visibility_data(config.num_modes, len(config.wavelengths), len(num_layer_options))
     
     def _create_empty_visibility_data(self, num_modes, num_wavelengths, num_layers):
-        """Create empty visibility data structure"""
+        """创建空的可见度数据结构"""
         visibility_by_mode = []
         for mode_idx in range(num_modes):
             mode_visibility = []
@@ -456,36 +569,28 @@ class Visualizer:
 
     def create_detailed_visibility_analysis(self, visibility_by_mode, config, num_layer_options, save_path=None, title_suffix=""):
         """
-        Create detailed visibility analysis with both bar charts and heatmaps for each mode
-        
-        Args:
-            visibility_by_mode: List of visibility data organized by mode
-            config: Configuration object
-            num_layer_options: List of layer numbers
-            save_path: Path to save the figure
-            title_suffix: Additional suffix for the title
+        创建详细的可见度分析图表
         """
-        print("🎨 Creating detailed visibility analysis...")
+        print("🎨 创建详细可见度分析...")
         
         num_modes = len(visibility_by_mode)
         wavelength_labels = [f'{int(wl*1e9)}nm' for wl in config.wavelengths]
         
-        # Create figure with subplots: 2 rows per mode (bar chart + heatmap)
+        # 创建图表
         fig = plt.figure(figsize=(15, 6 * num_modes))
         
-        # Define colors for different wavelengths
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         
         for mode_idx in range(num_modes):
-            mode_data = np.array(visibility_by_mode[mode_idx])  # Shape: (num_layers, num_wavelengths)
+            mode_data = np.array(visibility_by_mode[mode_idx])
             
-            # Find best performance for this mode
+            # 找到最佳性能
             best_vis = np.max(mode_data)
             best_pos = np.unravel_index(np.argmax(mode_data), mode_data.shape)
             best_layer = num_layer_options[best_pos[0]]
             best_wl = wavelength_labels[best_pos[1]]
             
-            # Bar chart subplot
+            # 柱状图子图
             ax1 = plt.subplot(2 * num_modes, 2, 2 * mode_idx + 1)
             
             x = np.arange(len(num_layer_options))
@@ -499,777 +604,605 @@ class Visualizer:
                 bars = ax1.bar(x + offset, values, width, label=wl_label, 
                               color=color, alpha=0.8, edgecolor='white', linewidth=0.5)
                 
-                # Add value labels on bars
+                # 添加数值标签
                 for i, (bar, value) in enumerate(zip(bars, values)):
-                    if value > 0.01:  # Only show labels for non-zero values
+                    if value > 0.01:
                         ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                                 f'{value:.3f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
             
-            ax1.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
-            ax1.set_ylabel('Visibility', fontsize=12, fontweight='bold')
-            ax1.set_title(f'Mode {mode_idx + 1} - Visibility Comparison\nBest: {best_layer}L@{best_wl} ({best_vis:.3f})', 
-                         fontsize=14, fontweight='bold')
+            ax1.set_xlabel('层数', fontsize=12, fontweight='bold')
+            ax1.set_ylabel('可见度', fontsize=12, fontweight='bold')
+            # 修改标题为英语
+            ax1.set_title(f'Mode {mode_idx + 1} - Visibility Comparison\nBest: {best_layer} Layers @ {best_wl} ({best_vis:.3f})', 
+                          fontsize=14, fontweight='bold')
             ax1.set_xticks(x)
             ax1.set_xticklabels(num_layer_options)
             ax1.legend(loc='upper right', fontsize=10)
             ax1.grid(True, alpha=0.3, axis='y')
             ax1.set_ylim(0, 1.0)
             
-            # Add best performance highlight
-            if best_vis > 0:
-                ax1.axhline(y=best_vis, color='red', linestyle='--', alpha=0.7, linewidth=1)
-                ax1.text(0.02, 0.98, f'Best: {best_vis:.3f}', transform=ax1.transAxes, 
-                        bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7),
-                        fontsize=10, fontweight='bold', va='top')
-            
-            # Heatmap subplot
+            # 热图子图
             ax2 = plt.subplot(2 * num_modes, 2, 2 * mode_idx + 2)
             
-            # Transpose for better visualization (wavelengths as rows, layers as columns)
+            heatmap_data = mode_data.T
+            # 热图子图 (继续)
+            ax2 = plt.subplot(2 * num_modes, 2, 2 * mode_idx + 2)
+            
             heatmap_data = mode_data.T
             
             im = ax2.imshow(heatmap_data, cmap='RdYlBu_r', aspect='auto', vmin=0, vmax=1)
             
-            # Add text annotations
+            # 添加数值标注
             for i in range(len(wavelength_labels)):
                 for j in range(len(num_layer_options)):
                     value = heatmap_data[i, j]
                     color = 'white' if value < 0.5 else 'black'
                     ax2.text(j, i, f'{value:.3f}', ha='center', va='center', 
-                            color=color, fontweight='bold', fontsize=10)
+                            color=color, fontsize=10, fontweight='bold')
             
-            ax2.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
-            ax2.set_ylabel('Wavelength', fontsize=12, fontweight='bold')
-            ax2.set_title(f'Mode {mode_idx + 1} - Heatmap', fontsize=14, fontweight='bold')
+            ax2.set_xlabel('层数', fontsize=12, fontweight='bold')
+            ax2.set_ylabel('波长', fontsize=12, fontweight='bold')
+            # 修改标题为英语
+            ax2.set_title(f'Mode {mode_idx + 1} - Visibility Heatmap{title_suffix}', 
+                          fontsize=14, fontweight='bold')
             ax2.set_xticks(range(len(num_layer_options)))
             ax2.set_xticklabels(num_layer_options)
             ax2.set_yticks(range(len(wavelength_labels)))
             ax2.set_yticklabels(wavelength_labels)
             
-            # Add colorbar
+            # 添加颜色条
             cbar = plt.colorbar(im, ax=ax2, fraction=0.046, pad=0.04)
-            cbar.set_label('Visibility', fontsize=10, fontweight='bold')
-        
-        # Overall title
-        fig.suptitle(f'Detailed Visibility Analysis by Mode {title_suffix}', 
-                    fontsize=16, fontweight='bold', y=0.98)
+            cbar.set_label('可见度', fontsize=10, fontweight='bold')
         
         plt.tight_layout()
-        plt.subplots_adjust(top=0.95)
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-            print(f"✅ Detailed visibility analysis saved: {save_path}")
+            print(f"✅ 详细可见度分析图已保存: {save_path}")
         
         plt.show()
+        return fig
 
-    def create_mode_wavelength_matrix_analysis(self, visibility_by_mode, config, num_layer_options, save_path=None):
+    def create_mode_wavelength_matrix_analysis(self, visibility_by_mode, config, num_layer_options, save_path):
         """
-        Create mode-wavelength visibility matrix analysis
+        创建模式-波长矩阵分析
         """
-        print("🎨 Creating mode-wavelength matrix analysis...")
+        print("🔍 创建模式-波长矩阵分析...")
         
-        num_modes = len(visibility_by_mode)
-        num_wavelengths = len(config.wavelengths)
         wavelength_labels = [f'{int(wl*1e9)}nm' for wl in config.wavelengths]
+        num_modes = len(visibility_by_mode)
         
-        # Create figure
-        fig, axes = plt.subplots(num_modes, num_wavelengths, figsize=(5*num_wavelengths, 4*num_modes))
+        fig, axes = plt.subplots(1, len(num_layer_options), figsize=(4*len(num_layer_options), 6))
+        if len(num_layer_options) == 1:
+            axes = [axes]
         
-        # Handle single mode or single wavelength cases
-        if num_modes == 1 and num_wavelengths == 1:
-            axes = np.array([[axes]])
-        elif num_modes == 1:
-            axes = axes.reshape(1, -1)
-        elif num_wavelengths == 1:
-            axes = axes.reshape(-1, 1)
-        
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-        
-        # Calculate performance summary
-        performance_summary = []
-        
-        for mode_idx in range(num_modes):
-            mode_data = np.array(visibility_by_mode[mode_idx])
-            mode_avg = np.mean(mode_data)
-            mode_max = np.max(mode_data)
-            performance_summary.append(f"Mode{mode_idx+1}: Avg={mode_avg:.3f}, Max={mode_max:.3f}")
+        for layer_idx, layers in enumerate(num_layer_options):
+            ax = axes[layer_idx]
             
-            for wl_idx in range(num_wavelengths):
-                ax = axes[mode_idx, wl_idx]
-                
-                # Get data for this mode and wavelength
-                wl_data = mode_data[:, wl_idx]
-                color = colors[wl_idx % len(colors)]
-                
-                # Create bar plot
-                bars = ax.bar(num_layer_options, wl_data, color=color, alpha=0.8, 
-                             edgecolor='white', linewidth=1)
-                
-                # Add value labels
-                for bar, value in zip(bars, wl_data):
-                    if value > 0.01:
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
-                               f'{value:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-                
-                # Highlight best performance
-                max_val = np.max(wl_data)
-                if max_val > 0:
-                    max_idx = np.argmax(wl_data)
-                    best_layer = num_layer_options[max_idx]
-                    
-                    # Add red border to best bar
-                    bars[max_idx].set_edgecolor('red')
-                    bars[max_idx].set_linewidth(3)
-                
-                ax.set_title(f'{wavelength_labels[wl_idx]}', fontsize=12, fontweight='bold')
-                ax.set_ylim(0, 1.0)
-                ax.grid(True, alpha=0.3, axis='y')
-                ax.set_xticks(num_layer_options)
-                
-                # Add mode label on the left
-                if wl_idx == 0:
-                    ax.set_ylabel(f'Mode {mode_idx + 1}\nVisibility', fontsize=11, fontweight='bold')
-                
-                # Add x-label on bottom row
-                if mode_idx == num_modes - 1:
-                    ax.set_xlabel('Layers', fontsize=10, fontweight='bold')
-        
-        # Add performance summary at the bottom
-        summary_text = " | ".join(performance_summary)
-        fig.text(0.5, 0.02, f"Performance Summary: {summary_text}", 
-                ha='center', va='bottom', fontsize=12, fontweight='bold',
-                bbox=dict(boxstyle="round,pad=0.5", facecolor='lightblue', alpha=0.8))
-        
-        fig.suptitle('Mode-Wavelength Visibility Matrix Analysis', fontsize=16, fontweight='bold')
+            # 构建矩阵数据
+            matrix_data = np.zeros((num_modes, len(wavelength_labels)))
+            for mode_idx in range(num_modes):
+                for wl_idx in range(len(wavelength_labels)):
+                    if layer_idx < len(visibility_by_mode[mode_idx]):
+                        matrix_data[mode_idx, wl_idx] = visibility_by_mode[mode_idx][layer_idx][wl_idx]
+            
+            # 绘制热图
+            im = ax.imshow(matrix_data, cmap='RdYlBu_r', aspect='auto', vmin=0, vmax=1)
+            
+            # 添加数值标注
+            for i in range(num_modes):
+                for j in range(len(wavelength_labels)):
+                    value = matrix_data[i, j]
+                    color = 'white' if value < 0.5 else 'black'
+                    ax.text(j, i, f'{value:.3f}', ha='center', va='center',
+                           color=color, fontsize=12, fontweight='bold')
+            
+            ax.set_xlabel('波长', fontsize=12, fontweight='bold')
+            ax.set_ylabel('模式', fontsize=12, fontweight='bold')
+            # 修改标题为英语
+            ax.set_title(f'{layers} Layers - Mode x Wavelength Matrix', fontsize=14, fontweight='bold')
+            ax.set_xticks(range(len(wavelength_labels)))
+            ax.set_xticklabels(wavelength_labels)
+            ax.set_yticks(range(num_modes))
+            ax.set_yticklabels([f'模式{i+1}' for i in range(num_modes)])
+            
+            # 添加颜色条
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label('可见度', fontsize=10, fontweight='bold')
         
         plt.tight_layout()
-        plt.subplots_adjust(top=0.93, bottom=0.1)
-        
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-            print(f"✅ Mode-wavelength matrix analysis saved: {save_path}")
-        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✅ 模式-波长矩阵分析已保存: {save_path}")
         plt.show()
-
-    def create_comprehensive_visibility_report(self, visibility_by_mode, config, num_layer_options, save_dir):
-        """
-        Create comprehensive visibility analysis report
-        """
-        print("📋 Creating comprehensive visibility report...")
-        
-        # 1. Detailed analysis by mode
-        detailed_path = os.path.join(save_dir, 'detailed_visibility_analysis.png')
-        self.create_detailed_visibility_analysis(visibility_by_mode, config, num_layer_options, detailed_path)
-        
-        # 2. Mode-wavelength matrix
-        matrix_path = os.path.join(save_dir, 'mode_wavelength_matrix.png')
-        self.create_mode_wavelength_matrix_analysis(visibility_by_mode, config, num_layer_options, matrix_path)
-        
-        # 3. Performance summary statistics
-        self._create_performance_statistics(visibility_by_mode, config, num_layer_options, save_dir)
-        
-        # 4. Export data to CSV
-        self._export_visibility_data(visibility_by_mode, config, num_layer_options, save_dir)
-        
-        print("✅ Comprehensive visibility report created")
 
     def _create_performance_statistics(self, visibility_by_mode, config, num_layer_options, save_dir):
-        """Create performance statistics summary"""
-        print("📊 Creating performance statistics...")
+        """
+        创建性能统计
+        """
+        print("📊 创建性能统计...")
         
-        wavelength_labels = [f'{int(wl*1e9)}nm' for wl in config.wavelengths]
+        # 收集所有数据
+        all_data = []
+        for mode_idx, mode_data in enumerate(visibility_by_mode):
+            for layer_idx, layer_data in enumerate(mode_data):
+                for wl_idx, vis_value in enumerate(layer_data):
+                    all_data.append({
+                        'mode': mode_idx + 1,
+                        'layers': num_layer_options[layer_idx],
+                        'wavelength': int(config.wavelengths[wl_idx] * 1e9),
+                        'visibility': vis_value
+                    })
         
-        # Calculate statistics
+        # 统计信息
+        vis_values = [d['visibility'] for d in all_data]
         stats = {
-            'overall': {
-                'max_visibility': 0,
-                'avg_visibility': 0,
-                'best_config': None
-            },
-            'by_mode': [],
-            'by_wavelength': [],
-            'by_layers': []
+            'total_configs': len(all_data),
+            'mean_visibility': np.mean(vis_values),
+            'std_visibility': np.std(vis_values),
+            'max_visibility': np.max(vis_values),
+            'min_visibility': np.min(vis_values),
+            'median_visibility': np.median(vis_values)
         }
         
-        all_values = []
+        # 找到最佳配置
+        best_idx = np.argmax(vis_values)
+        best_config = all_data[best_idx]
         
-        # Mode statistics
-        for mode_idx, mode_data in enumerate(visibility_by_mode):
-            mode_array = np.array(mode_data)
-            all_values.extend(mode_array.flatten())
-            
-            mode_stats = {
-                'mode': mode_idx + 1,
-                'max_vis': np.max(mode_array),
-                'min_vis': np.min(mode_array),
-                'avg_vis': np.mean(mode_array),
-                'std_vis': np.std(mode_array),
-                'best_layer': None,
-                'best_wavelength': None
-            }
-            
-            # Find best configuration for this mode
-            best_pos = np.unravel_index(np.argmax(mode_array), mode_array.shape)
-            mode_stats['best_layer'] = num_layer_options[best_pos[0]]
-            mode_stats['best_wavelength'] = wavelength_labels[best_pos[1]]
-            
-            stats['by_mode'].append(mode_stats)
-        
-        # Wavelength statistics
-        for wl_idx, wl_label in enumerate(wavelength_labels):
-            wl_values = []
-            for mode_data in visibility_by_mode:
-                mode_array = np.array(mode_data)
-                if wl_idx < mode_array.shape[1]:
-                    wl_values.extend(mode_array[:, wl_idx])
-            
-            if wl_values:
-                wl_stats = {
-                    'wavelength': wl_label,
-                    'max_vis': np.max(wl_values),
-                    'min_vis': np.min(wl_values),
-                    'avg_vis': np.mean(wl_values),
-                    'std_vis': np.std(wl_values)
-                }
-                stats['by_wavelength'].append(wl_stats)
-        
-        # Layer statistics
-        for layer_idx, layer_num in enumerate(num_layer_options):
-            layer_values = []
-            for mode_data in visibility_by_mode:
-                mode_array = np.array(mode_data)
-                if layer_idx < mode_array.shape[0]:
-                    layer_values.extend(mode_array[layer_idx, :])
-            
-            if layer_values:
-                layer_stats = {
-                    'layers': layer_num,
-                    'max_vis': np.max(layer_values),
-                    'min_vis': np.min(layer_values),
-                    'avg_vis': np.mean(layer_values),
-                    'std_vis': np.std(layer_values)
-                }
-                stats['by_layers'].append(layer_stats)
-        
-        # Overall statistics
-        if all_values:
-            stats['overall']['max_visibility'] = np.max(all_values)
-            stats['overall']['avg_visibility'] = np.mean(all_values)
-            
-            # Find best overall configuration
-            best_overall = 0
-            best_config = None
-            for mode_idx, mode_data in enumerate(visibility_by_mode):
-                mode_array = np.array(mode_data)
-                mode_max = np.max(mode_array)
-                if mode_max > best_overall:
-                    best_overall = mode_max
-                    best_pos = np.unravel_index(np.argmax(mode_array), mode_array.shape)
-                    best_config = {
-                        'mode': mode_idx + 1,
-                        'layers': num_layer_options[best_pos[0]],
-                        'wavelength': wavelength_labels[best_pos[1]],
-                        'visibility': mode_max
-                    }
-            
-            stats['overall']['best_config'] = best_config
-        
-        # Save statistics to JSON
+        # 保存统计信息
         stats_path = os.path.join(save_dir, 'visibility_statistics.json')
         with open(stats_path, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
+            json.dump({
+                'statistics': {k: float(v) for k, v in stats.items()},
+                'best_configuration': best_config
+            }, f, indent=2, ensure_ascii=False)
         
-        # Create visualization
-        self._visualize_statistics(stats, save_dir)
-        
-        print(f"✅ Performance statistics saved: {stats_path}")
-
-    def _visualize_statistics(self, stats, save_dir):
-        """Create statistics visualization"""
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        # 1. Mode comparison
-        ax1 = axes[0, 0]
-        mode_data = stats['by_mode']
-        modes = [f"Mode {m['mode']}" for m in mode_data]
-        max_vis = [m['max_vis'] for m in mode_data]
-        avg_vis = [m['avg_vis'] for m in mode_data]
-        
-        x = np.arange(len(modes))
-        width = 0.35
-        
-        bars1 = ax1.bar(x - width/2, max_vis, width, label='Max Visibility', color='#ff7f0e', alpha=0.8)
-        bars2 = ax1.bar(x + width/2, avg_vis, width, label='Avg Visibility', color='#1f77b4', alpha=0.8)
-        
-        # Add value labels
-        for bars in [bars1, bars2]:
-            for bar in bars:
-                height = bar.get_height()
-                ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                        f'{height:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-        
-        ax1.set_xlabel('Mode', fontweight='bold')
-        ax1.set_ylabel('Visibility', fontweight='bold')
-        ax1.set_title('Performance by Mode', fontweight='bold')
-        ax1.set_xticks(x)
-        ax1.set_xticklabels(modes)
-        ax1.legend()
-        ax1.grid(True, alpha=0.3, axis='y')
-        ax1.set_ylim(0, 1.0)
-        
-        # 2. Wavelength comparison
-        ax2 = axes[0, 1]
-        if stats['by_wavelength']:
-            wl_data = stats['by_wavelength']
-            wavelengths = [w['wavelength'] for w in wl_data]
-            wl_max_vis = [w['max_vis'] for w in wl_data]
-            wl_avg_vis = [w['avg_vis'] for w in wl_data]
-            
-            x = np.arange(len(wavelengths))
-            bars1 = ax2.bar(x - width/2, wl_max_vis, width, label='Max Visibility', color='#2ca02c', alpha=0.8)
-            bars2 = ax2.bar(x + width/2, wl_avg_vis, width, label='Avg Visibility', color='#d62728', alpha=0.8)
-            
-            # Add value labels
-            for bars in [bars1, bars2]:
-                for bar in bars:
-                    height = bar.get_height()
-                    ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                            f'{height:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-            
-            ax2.set_xlabel('Wavelength', fontweight='bold')
-            ax2.set_ylabel('Visibility', fontweight='bold')
-            ax2.set_title('Performance by Wavelength', fontweight='bold')
-            ax2.set_xticks(x)
-            ax2.set_xticklabels(wavelengths)
-            ax2.legend()
-            ax2.grid(True, alpha=0.3, axis='y')
-            ax2.set_ylim(0, 1.0)
-        else:
-            ax2.text(0.5, 0.5, 'No wavelength data', ha='center', va='center', transform=ax2.transAxes)
-            ax2.set_title('Performance by Wavelength', fontweight='bold')
-        
-        # 3. Layer comparison
-        ax3 = axes[1, 0]
-        if stats['by_layers']:
-            layer_data = stats['by_layers']
-            layers = [str(l['layers']) for l in layer_data]
-            layer_max_vis = [l['max_vis'] for l in layer_data]
-            layer_avg_vis = [l['avg_vis'] for l in layer_data]
-            
-            x = np.arange(len(layers))
-            bars1 = ax3.bar(x - width/2, layer_max_vis, width, label='Max Visibility', color='#9467bd', alpha=0.8)
-            bars2 = ax3.bar(x + width/2, layer_avg_vis, width, label='Avg Visibility', color='#8c564b', alpha=0.8)
-            
-            # Add value labels
-            for bars in [bars1, bars2]:
-                for bar in bars:
-                    height = bar.get_height()
-                    ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                            f'{height:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-            
-            ax3.set_xlabel('Number of Layers', fontweight='bold')
-            ax3.set_ylabel('Visibility', fontweight='bold')
-            ax3.set_title('Performance by Layer Count', fontweight='bold')
-            ax3.set_xticks(x)
-            ax3.set_xticklabels(layers)
-            ax3.legend()
-            ax3.grid(True, alpha=0.3, axis='y')
-            ax3.set_ylim(0, 1.0)
-        else:
-            ax3.text(0.5, 0.5, 'No layer data', ha='center', va='center', transform=ax3.transAxes)
-            ax3.set_title('Performance by Layer Count', fontweight='bold')
-        
-        # 4. Best configuration summary
-        ax4 = axes[1, 1]
-        ax4.axis('off')
-        
-        if stats['overall']['best_config']:
-            best = stats['overall']['best_config']
-            summary_text = f"""
-Best Overall Configuration:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Mode: {best['mode']}
-Layers: {best['layers']}
-Wavelength: {best['wavelength']}
-Visibility: {best['visibility']:.4f}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Overall Statistics:
-Max Visibility: {stats['overall']['max_visibility']:.4f}
-Avg Visibility: {stats['overall']['avg_visibility']:.4f}
-
-Total Configurations: {len(stats['by_mode']) * len(stats['by_wavelength']) * len(stats['by_layers'])}
-            """
-            
-            ax4.text(0.1, 0.9, summary_text, transform=ax4.transAxes, fontsize=12,
-                    verticalalignment='top', fontfamily='monospace',
-                    bbox=dict(boxstyle="round,pad=0.5", facecolor='lightblue', alpha=0.8))
-        else:
-            ax4.text(0.5, 0.5, 'No configuration data', ha='center', va='center', transform=ax4.transAxes)
-        
-        ax4.set_title('Best Configuration Summary', fontweight='bold')
-        
-        plt.tight_layout()
-        
-        # Save statistics visualization
-        stats_viz_path = os.path.join(save_dir, 'visibility_statistics_visualization.png')
-        plt.savefig(stats_viz_path, dpi=300, bbox_inches='tight', facecolor='white')
-        plt.show()
-        
-        print(f"✅ Statistics visualization saved: {stats_viz_path}")
+        print(f"✅ 性能统计已保存: {stats_path}")
 
     def _export_visibility_data(self, visibility_by_mode, config, num_layer_options, save_dir):
-        """Export visibility data to CSV"""
-        print("📄 Exporting visibility data to CSV...")
+        """
+        导出可见度数据
+        """
+        print("💾 导出可见度数据...")
         
-        wavelength_labels = [f'{int(wl*1e9)}nm' for wl in config.wavelengths]
-        
-        # Prepare data for CSV
+        # CSV格式
         csv_data = []
-        headers = ['Mode', 'Layers'] + wavelength_labels + ['Max_Visibility', 'Avg_Visibility']
+        headers = ['Mode', 'Layers', 'Wavelength_nm', 'Visibility']
         
         for mode_idx, mode_data in enumerate(visibility_by_mode):
-            mode_array = np.array(mode_data)
-            
-            for layer_idx, layer_num in enumerate(num_layer_options):
-                if layer_idx < mode_array.shape[0]:
-                    row = [f'Mode_{mode_idx+1}', layer_num]
-                    
-                    # Add wavelength data
-                    layer_data = mode_array[layer_idx, :]
-                    row.extend([f'{val:.6f}' for val in layer_data])
-                    
-                    # Add statistics
-                    row.append(f'{np.max(layer_data):.6f}')
-                    row.append(f'{np.mean(layer_data):.6f}')
-                    
-                    csv_data.append(row)
+            for layer_idx, layer_data in enumerate(mode_data):
+                for wl_idx, vis_value in enumerate(layer_data):
+                    csv_data.append([
+                        mode_idx + 1,
+                        num_layer_options[layer_idx],
+                        int(config.wavelengths[wl_idx] * 1e9),
+                        vis_value
+                    ])
         
-        # Save to CSV
         csv_path = os.path.join(save_dir, 'visibility_data.csv')
         with open(csv_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(headers)
             writer.writerows(csv_data)
         
-        print(f"✅ Visibility data exported: {csv_path}")
+        print(f"✅ 可见度数据已导出: {csv_path}")
 
-    def create_training_progress_visualization(self, results, save_path=None):
-        """Create training progress visualization"""
-        print("📈 Creating training progress visualization...")
+# ==================== 双维度分析报告方法 ====================
+
+    def create_dual_dimension_analysis_report(self, dual_visibility_data, config, num_layer_options, save_dir):
+        """
+        创建双维度可见度分析报告
+        """
+        print("📊 创建双维度可见度分析报告...")
         
-        if 'train_losses' not in results or 'val_losses' not in results:
-            print("⚠ No training loss data available")
+        if not dual_visibility_data:
+            print("❌ 没有双维度可见度数据")
             return
         
-        train_losses = results['train_losses']
-        val_losses = results['val_losses']
+        # 组织数据
+        cross_scores = {}
+        snr_scores = {}
+        comprehensive_scores = {}
         
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        for key, result in dual_visibility_data.items():
+            layers, mode_idx, wavelength = key
+            cross_scores[key] = result['scores']['cross_score']
+            snr_scores[key] = result['scores']['snr_score'] 
+            comprehensive_scores[key] = result['scores']['comprehensive']
         
-        # 1. Loss curves
+        # 创建对比图
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        
+        # 1. Cross Matrix Score 对比
         ax1 = axes[0, 0]
-        epochs = range(1, len(train_losses) + 1)
+        self._plot_dual_score_comparison(cross_scores, config, num_layer_options, ax1, 
+                                       'Cross Matrix Score', 'Convergence Intensity')
         
-        ax1.plot(epochs, train_losses, 'b-', label='Training Loss', linewidth=2)
-        ax1.plot(epochs, val_losses, 'r-', label='Validation Loss', linewidth=2)
-        ax1.set_xlabel('Epoch', fontweight='bold')
-        ax1.set_ylabel('Loss', fontweight='bold')
-        ax1.set_title('Training and Validation Loss', fontweight='bold')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        ax1.set_yscale('log')
-        
-        # 2. Loss difference
+        # 2. SNR Score 对比  
         ax2 = axes[0, 1]
-        loss_diff = np.array(val_losses) - np.array(train_losses)
-        ax2.plot(epochs, loss_diff, 'g-', linewidth=2)
-        ax2.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-        ax2.set_xlabel('Epoch', fontweight='bold')
-        ax2.set_ylabel('Validation - Training Loss', fontweight='bold')
-        ax2.set_title('Overfitting Monitor', fontweight='bold')
-        ax2.grid(True, alpha=0.3)
+        self._plot_dual_score_comparison(snr_scores, config, num_layer_options, ax2,
+                                       'SNR Score', 'Signal-to-Noise Ratio')
         
-        # 3. Learning rate (if available)
+        # 3. 综合Score对比
         ax3 = axes[1, 0]
-        if 'learning_rates' in results:
-            learning_rates = results['learning_rates']
-            ax3.plot(epochs, learning_rates, 'm-', linewidth=2)
-            ax3.set_xlabel('Epoch', fontweight='bold')
-            ax3.set_ylabel('Learning Rate', fontweight='bold')
-            ax3.set_title('Learning Rate Schedule', fontweight='bold')
-            ax3.grid(True, alpha=0.3)
-            ax3.set_yscale('log')
-        else:
-            ax3.text(0.5, 0.5, 'Learning rate data not available', 
-                    ha='center', va='center', transform=ax3.transAxes)
-            ax3.set_title('Learning Rate Schedule', fontweight='bold')
+        self._plot_dual_score_comparison(comprehensive_scores, config, num_layer_options, ax3,
+                                       'Comprehensive Score', 'Overall Visibility')
         
-        # 4. Training summary
+        # 4. 散点图：Cross vs SNR
         ax4 = axes[1, 1]
-        ax4.axis('off')
         
-        final_train_loss = train_losses[-1] if train_losses else 0
-        final_val_loss = val_losses[-1] if val_losses else 0
-        min_val_loss = min(val_losses) if val_losses else 0
-        min_val_epoch = val_losses.index(min_val_loss) + 1 if val_losses else 0
+        cross_vals = list(cross_scores.values())
+        snr_vals = list(snr_scores.values())
+        comp_vals = list(comprehensive_scores.values())
         
-        summary_text = f"""
-Training Summary:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Total Epochs: {len(train_losses)}
-Final Training Loss: {final_train_loss:.6f}
-Final Validation Loss: {final_val_loss:.6f}
-
-Best Validation Loss: {min_val_loss:.6f}
-Best Epoch: {min_val_epoch}
-
-Overfitting Check:
-Final Gap: {final_val_loss - final_train_loss:.6f}
-        """
+        scatter = ax4.scatter(cross_vals, snr_vals, c=comp_vals, cmap='viridis', 
+                             s=100, alpha=0.7, edgecolors='black')
         
-        ax4.text(0.1, 0.9, summary_text, transform=ax4.transAxes, fontsize=11,
-                verticalalignment='top', fontfamily='monospace',
-                bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgreen', alpha=0.8))
+        ax4.set_xlabel('Cross Matrix Score', fontweight='bold')
+        ax4.set_ylabel('SNR Score', fontweight='bold') 
+        ax4.set_title('Cross Matrix vs SNR Score Distribution', fontweight='bold')
+        ax4.grid(True, alpha=0.3)
         
-        ax4.set_title('Training Summary', fontweight='bold')
+        # 添加颜色条
+        cbar = plt.colorbar(scatter, ax=ax4)
+        cbar.set_label('Comprehensive Score', fontweight='bold')
+        
+        # 添加对角线
+        ax4.plot([0, 1], [0, 1], 'r--', alpha=0.5, label='Equal Performance Line')
+        ax4.legend()
         
         plt.tight_layout()
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-            print(f"✅ Training progress visualization saved: {save_path}")
-        
+        # 保存报告
+        report_path = os.path.join(save_dir, 'dual_dimension_visibility_report.png')
+        plt.savefig(report_path, dpi=300, bbox_inches='tight', facecolor='white')
         plt.show()
+        
+        # 创建详细的单个配置分析
+        self._create_detailed_dual_analysis(dual_visibility_data, config, num_layer_options, save_dir)
+        
+        print(f"✅ 双维度可见度分析报告已保存: {report_path}")
 
-    def create_weights_analysis(self, results, config, save_path=None):
-        """Create weights analysis visualization"""
-        print("🔍 Creating weights analysis...")
+    def _plot_dual_score_comparison(self, scores, config, num_layer_options, ax, title, ylabel):
+        """
+        绘制双维度评分对比图
+        """
+        # 按模式和波长组织数据
+        wavelength_labels = [f'{int(wl*1e9)}nm' for wl in config.wavelengths]
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         
-        if 'weights_pred' not in results:
-            print("⚠ No weights prediction data available")
+        for mode_idx in range(config.num_modes):
+            for wl_idx, wl_nm in enumerate([int(wl*1e9) for wl in config.wavelengths]):
+                # 收集该模式和波长的数据
+                layer_scores = []
+                for layers in num_layer_options:
+                    key = (layers, mode_idx, wl_nm)
+                    if key in scores:
+                        layer_scores.append(scores[key])
+                    else:
+                        layer_scores.append(0.0)
+                
+                # 绘制线条
+                color = colors[wl_idx % len(colors)]
+                linestyle = '-' if mode_idx == 0 else '--' if mode_idx == 1 else ':'
+                label = f'Mode{mode_idx+1}@{wavelength_labels[wl_idx]}'
+                
+                ax.plot(num_layer_options, layer_scores, 
+                       color=color, linestyle=linestyle, marker='o', 
+                       linewidth=2, markersize=6, label=label, alpha=0.8)
+        
+        ax.set_xlabel('Number of Layers', fontweight='bold')
+        ax.set_ylabel(ylabel, fontweight='bold')
+        ax.set_title(title, fontweight='bold')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, 1.0)
+        ax.set_xticks(num_layer_options)
+
+    def _create_detailed_dual_analysis(self, dual_visibility_data, config, num_layer_options, save_dir):
+        """
+        为最佳配置创建详细的双维度分析
+        """
+        print("🔍 创建详细双维度分析...")
+        
+        # 找到综合评分最高的配置
+        best_key = max(dual_visibility_data.keys(), 
+                      key=lambda k: dual_visibility_data[k]['scores']['comprehensive'])
+        best_result = dual_visibility_data[best_key]
+        
+        # 重新加载对应的场数据
+        layers, mode_idx, wl_nm = best_key
+        file_pattern = f"MC_single_*{layers}*mode{mode_idx+1}*{wl_nm}nm*.npy"
+        matching_files = glob.glob(os.path.join(save_dir, file_pattern))
+        
+        if not matching_files:
+            print(f"❌ 找不到最佳配置的场数据文件: {file_pattern}")
             return
-        
-        weights_pred = results['weights_pred']
-        
-        # Analyze weights structure
-        print(f"Weights prediction shape: {[w.shape if hasattr(w, 'shape') else len(w) for w in weights_pred]}")
-        
-        # Create visualization based on data structure
-        num_layers = len(weights_pred)
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        # 1. Weights distribution by layer
-        ax1 = axes[0, 0]
-        
-        layer_means = []
-        layer_stds = []
-        layer_labels = []
-        
-        for layer_idx, layer_weights in enumerate(weights_pred):
-            if hasattr(layer_weights, 'flatten'):
-                flat_weights = layer_weights.flatten()
-            elif isinstance(layer_weights, (list, tuple)):
-                flat_weights = np.array(layer_weights).flatten()
-            else:
-                flat_weights = np.array([layer_weights]).flatten()
-            
-            layer_means.append(np.mean(flat_weights))
-            layer_stds.append(np.std(flat_weights))
-            layer_labels.append(f'Layer {layer_idx+1}')
-        
-        x = np.arange(len(layer_labels))
-        bars = ax1.bar(x, layer_means, yerr=layer_stds, capsize=5, 
-                      color='skyblue', alpha=0.8, edgecolor='navy')
-        
-        # Add value labels
-        for bar, mean, std in zip(bars, layer_means, layer_stds):
-            ax1.text(bar.get_x() + bar.get_width()/2., bar.get_height() + std + 0.01,
-                    f'{mean:.3f}±{std:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-        
-        ax1.set_xlabel('Layer', fontweight='bold')
-        ax1.set_ylabel('Weight Value', fontweight='bold')
-        ax1.set_title('Weight Distribution by Layer', fontweight='bold')
-        ax1.set_xticks(x)
-        ax1.set_xticklabels(layer_labels)
-        ax1.grid(True, alpha=0.3, axis='y')
-        
-        # 2. Weights heatmap (if 2D structure available)
-        ax2 = axes[0, 1]
         
         try:
-            # Try to create a heatmap from weights
-            if len(weights_pred) > 1 and hasattr(weights_pred[0], '__len__'):
-                # Create weight matrix
-                max_len = max(len(w) if hasattr(w, '__len__') else 1 for w in weights_pred)
-                weight_matrix = np.zeros((len(weights_pred), max_len))
-                
-                for i, layer_weights in enumerate(weights_pred):
-                    if hasattr(layer_weights, '__len__'):
-                        layer_array = np.array(layer_weights).flatten()
-                        weight_matrix[i, :len(layer_array)] = layer_array[:max_len]
-                    else:
-                        weight_matrix[i, 0] = layer_weights
-                
-                im = ax2.imshow(weight_matrix, cmap='RdBu_r', aspect='auto')
-                ax2.set_xlabel('Weight Index', fontweight='bold')
-                ax2.set_ylabel('Layer', fontweight='bold')
-                ax2.set_title('Weights Heatmap', fontweight='bold')
-                
-                # Add colorbar
-                cbar = plt.colorbar(im, ax=ax2)
-                cbar.set_label('Weight Value', fontweight='bold')
-                
-            else:
-                ax2.text(0.5, 0.5, 'Insufficient data for heatmap', 
-                        ha='center', va='center', transform=ax2.transAxes)
-                ax2.set_title('Weights Heatmap', fontweight='bold')
-                
+            field_data = np.load(matching_files[0], allow_pickle=True)
+            
+            # 创建详细可视化
+            detail_path = os.path.join(save_dir, f'best_config_dual_analysis_{layers}L_mode{mode_idx+1}_{wl_nm}nm.png')
+            self.visualize_dual_dimension_details(field_data, best_result, detail_path, best_key)
+            
         except Exception as e:
-            ax2.text(0.5, 0.5, f'Heatmap error: {str(e)}', 
-                    ha='center', va='center', transform=ax2.transAxes)
-            ax2.set_title('Weights Heatmap', fontweight='bold')
-        
-        # 3. Weight evolution (if multiple predictions available)
-        ax3 = axes[1, 0]
-        
-        # This would need training history data
-        ax3.text(0.5, 0.5, 'Weight evolution requires training history', 
-                ha='center', va='center', transform=ax3.transAxes)
-        ax3.set_title('Weight Evolution', fontweight='bold')
-        
-        # 4. Statistics summary
-        ax4 = axes[1, 1]
-        ax4.axis('off')
-        
-        # Calculate overall statistics
-        all_weights = []
-        for layer_weights in weights_pred:
-            if hasattr(layer_weights, 'flatten'):
-                all_weights.extend(layer_weights.flatten())
-            elif isinstance(layer_weights, (list, tuple)):
-                all_weights.extend(np.array(layer_weights).flatten())
-            else:
-                all_weights.append(layer_weights)
-        
-        all_weights = np.array(all_weights)
-        
-        stats_text = f"""
-Weights Statistics:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            print(f"❌ 创建详细分析失败: {e}")
 
-Total Parameters: {len(all_weights)}
-Mean: {np.mean(all_weights):.6f}
-Std: {np.std(all_weights):.6f}
-Min: {np.min(all_weights):.6f}
-Max: {np.max(all_weights):.6f}
+    def visualize_dual_dimension_details(self, field_data, dual_result, save_path, config_key):
+        """
+        可视化双维度分析的详细结果
+        """
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        
+        # 处理强度数据
+        if np.iscomplexobj(field_data):
+            intensity = np.abs(field_data)**2
+        else:
+            intensity = np.abs(field_data)**2
+        
+        if intensity.ndim > 2:
+            intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
+        
+        intensity_norm = intensity / np.max(intensity) if np.max(intensity) > 0 else intensity
+        
+        # 1. 原始强度分布
+        ax1 = axes[0, 0]
+        im1 = ax1.imshow(intensity_norm, cmap='hot', aspect='auto')
+        ax1.set_title('Original Intensity Distribution', fontweight='bold', fontsize=14)
+        ax1.set_xlabel('X (pixels)')
+        ax1.set_ylabel('Y (pixels)')
+        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
+        
+        # 2. Cross Matrix 网格叠加
+        ax2 = axes[0, 1]
+        ax2.imshow(intensity_norm, cmap='hot', aspect='auto', alpha=0.7)
+        
+        # 叠加网格线和数值
+        cross_matrix = dual_result['cross_matrix']['cross_matrix']
+        grid_size = dual_result['cross_matrix']['grid_size']
+        H, W = intensity.shape
+        
+        # 绘制网格线
+        for i in range(grid_size + 1):
+            y_pos = i * H // grid_size
+            ax2.axhline(y=y_pos, color='cyan', linewidth=2, alpha=0.8)
+        for j in range(grid_size + 1):
+            x_pos = j * W // grid_size
+            ax2.axvline(x=x_pos, color='cyan', linewidth=2, alpha=0.8)
+        
+        # 标注每个区域的强度值
+        region_h = H // grid_size
+        region_w = W // grid_size
+        for i in range(grid_size):
+            for j in range(grid_size):
+                center_y = i * region_h + region_h // 2
+                center_x = j * region_w + region_w // 2
+                value = cross_matrix[i, j]
+                ax2.text(center_x, center_y, f'{value:.3f}', 
+                        ha='center', va='center', color='white', 
+                        fontweight='bold', fontsize=10,
+                        bbox=dict(boxstyle="round,pad=0.3", facecolor='black', alpha=0.7))
+        
+        ax2.set_title(f'Cross Matrix Analysis ({grid_size}×{grid_size})', fontweight='bold', fontsize=14)
+        ax2.set_xlabel('X (pixels)')
+        ax2.set_ylabel('Y (pixels)')
+        
+        # 3. Cross Matrix 热图
+        ax3 = axes[0, 2]
+        im3 = ax3.imshow(cross_matrix, cmap='RdYlBu_r', aspect='auto')
+        ax3.set_title('Cross Matrix Heatmap', fontweight='bold', fontsize=14)
+        ax3.set_xlabel('Grid X')
+        ax3.set_ylabel('Grid Y')
+        
+        # 添加数值标注
+        for i in range(grid_size):
+            for j in range(grid_size):
+                value = cross_matrix[i, j]
+                color = 'white' if value < np.max(cross_matrix) * 0.5 else 'black'
+                ax3.text(j, i, f'{value:.3f}', ha='center', va='center', 
+                        color=color, fontweight='bold', fontsize=10)
+        
+        plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04)
+        
+        # 4. 信噪比区域分析
+        ax4 = axes[1, 0]
+        ax4.imshow(intensity_norm, cmap='hot', aspect='auto', alpha=0.7)
+        
+        # 叠加目标区域和背景区域
+        snr_data = dual_result['snr']
+        target_mask = snr_data['target_mask']
+        background_mask = snr_data['background_mask']
+        
+        # 创建彩色掩码
+        colored_mask = np.zeros((*intensity.shape, 3))
+        colored_mask[target_mask] = [0, 1, 0]  # 绿色：目标区域
+        colored_mask[background_mask] = [1, 0, 0]  # 红色：背景区域
+        
+        ax4.imshow(colored_mask, alpha=0.3)
+        ax4.set_title('Signal (Green) vs Noise (Red) Regions', fontweight='bold', fontsize=14)
+        ax4.set_xlabel('X (pixels)')
+        ax4.set_ylabel('Y (pixels)')
+        
+        # 添加图例
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor='green', alpha=0.3, label='Signal Region'),
+                          Patch(facecolor='red', alpha=0.3, label='Background Region')]
+        ax4.legend(handles=legend_elements, loc='upper right')
+        
+        # 5. SNR 统计分布
+        ax5 = axes[1, 1]
+        
+        signal_intensities = intensity_norm[target_mask]
+        background_intensities = intensity_norm[background_mask]
+        
+        # 绘制直方图
+        bins = np.linspace(0, 1, 50)
+        ax5.hist(signal_intensities, bins=bins, alpha=0.7, color='green', 
+                label=f'Signal (μ={np.mean(signal_intensities):.3f})', density=True)
+        ax5.hist(background_intensities, bins=bins, alpha=0.7, color='red', 
+                label=f'Background (μ={np.mean(background_intensities):.3f})', density=True)
+        
+        ax5.set_xlabel('Normalized Intensity')
+        ax5.set_ylabel('Density')
+        ax5.set_title('Signal vs Background Distribution', fontweight='bold', fontsize=14)
+        ax5.legend()
+        ax5.grid(True, alpha=0.3)
+        
+        # 6. 综合评分总结
+        ax6 = axes[1, 2]
+        ax6.axis('off')
+        
+        # 修改总结文本为英语
+        scores = dual_result['scores']
+        summary = dual_result['summary']
+        layers, mode_idx, wl_nm = config_key
+        
+        summary_text = f"""
+Best Configuration Dual Dimension Analysis
+-------------------------------------------
+Configuration: {layers} Layers, Mode {mode_idx+1}, {wl_nm}nm
 
-Layers: {len(weights_pred)}
-Non-zero params: {np.count_nonzero(all_weights)}
-Sparsity: {(1 - np.count_nonzero(all_weights)/len(all_weights))*100:.2f}%
+Dimension 1: Cross Matrix Convergence Intensity
+  Focus Concentration: {summary['focus_concentration']:.4f}
+  Cross Score: {scores['cross_score']:.4f}
+
+Dimension 2: Signal-to-Noise Ratio Analysis  
+  SNR (dB): {summary['snr_db']:.2f}
+  Contrast Ratio: {summary['contrast_ratio']:.2f}
+  SNR Score: {scores['snr_score']:.4f}
+
+Overall Evaluation:
+  Comprehensive Visibility: {summary['comprehensive_visibility']:.4f}
+  
+Region Information:
+  Signal Pixels: {dual_result['snr']['signal_region_size']}
+  Noise Pixels: {dual_result['snr']['background_region_size']}
+  Signal Power: {dual_result['snr']['signal_power']:.4f}
+  Noise Power: {dual_result['snr']['noise_power']:.4f}
         """
         
-        ax4.text(0.1, 0.9, stats_text, transform=ax4.transAxes, fontsize=11,
-                verticalalignment='top', fontfamily='monospace',
-                bbox=dict(boxstyle="round,pad=0.5", facecolor='lightyellow', alpha=0.8))
-        
-        ax4.set_title('Weights Statistics', fontweight='bold')
+        ax6.text(0.1, 0.9, summary_text, transform=ax6.transAxes, fontsize=12,
+                 verticalalignment='top', fontfamily='monospace',
+                 bbox=dict(boxstyle="round,pad=0.5", facecolor='lightblue', alpha=0.8))
+        ax6.set_title('Comprehensive Analysis Summary', fontweight='bold', fontsize=14)
         
         plt.tight_layout()
         
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-            print(f"✅ Weights analysis saved: {save_path}")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✅ 最佳配置双维度分析图已保存: {save_path}")
         
         plt.show()
-
-    def create_complete_analysis_report(self, results, config, num_layer_options, save_dir):
-        """Create complete analysis report with all visualizations"""
-        print("📊 Creating complete analysis report...")
         
-        # Create save directory if it doesn't exist
-        os.makedirs(save_dir, exist_ok=True)
+        return fig
+    def create_snr_analysis_visualization(self, real_visibility_data, config, num_layer_options, 
+                                        save_path=None, title_suffix=""):
+        """
+        创建专门的SNR分析可视化
+        """
+        if not real_visibility_data:
+            print("❌ 没有可用的双维度可见度数据")
+            return
         
-        # 1. Organize visibility data
-        if 'visibility' in results:
-            visibility_by_mode = self.organize_visibility_by_mode(results, config, num_layer_options)
+        # 提取SNR数据
+        snr_data = {}
+        cross_data = {}
+        
+        for key, data in real_visibility_data.items():
+            if 'snr_score' in data and 'cross_score' in data:
+                snr_data[key] = data['snr_score']
+                cross_data[key] = data['cross_score']
+        
+        if not snr_data:
+            print("❌ 没有找到SNR数据")
+            return
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        
+        # 1. SNR热力图 - 全局概览
+        self._create_snr_heatmap(ax1, data, config, num_layer_options)
+        
+        # 2. SNR柱状图 - 精确对比  
+        self._create_snr_bar_chart(ax2, data, config, num_layer_options)
+        
+        plt.tight_layout()
+        return fig
             
-            # Create comprehensive visibility report
-            self.create_comprehensive_visibility_report(visibility_by_mode, config, num_layer_options, save_dir)
-        
-        # 2. Training progress visualization
-        if 'train_losses' in results:
-            training_path = os.path.join(save_dir, 'training_progress.png')
-            self.create_training_progress_visualization(results, training_path)
-        
-        # 3. Weights analysis
-        if 'weights_pred' in results:
-            weights_path = os.path.join(save_dir, 'weights_analysis.png')
-            self.create_weights_analysis(results, config, weights_path)
-        
-        # 4. Create summary report
-        self._create_summary_report(results, config, num_layer_options, save_dir)
-        
-        print("✅ Complete analysis report created")
-
-    def _create_summary_report(self, results, config, num_layer_options, save_dir):
-        """Create summary report"""
-        print("📋 Creating summary report...")
-        
-        # Create summary text
-        summary = {
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'configuration': {
-                'num_modes': config.num_modes,
-                'wavelengths': [f'{int(wl*1e9)}nm' for wl in config.wavelengths],
-                'layer_options': num_layer_options,
-                'device': str(config.device),
-                'save_dir': config.save_dir
-            },
-            'results_summary': {},
-            'files_created': []
-        }
-        
-        # Add results summary
-        if 'visibility' in results:
-            vis_data = results['visibility']
-            if vis_data:
-                all_vis = []
-                for layer_vis in vis_data:
-                    if isinstance(layer_vis, (list, tuple)):
-                        all_vis.extend(layer_vis)
-                    else:
-                        all_vis.append(layer_vis)
                 
-                summary['results_summary']['visibility'] = {
-                    'max': float(np.max(all_vis)) if all_vis else 0,
-                    'mean': float(np.mean(all_vis)) if all_vis else 0,
-                    'min': float(np.min(all_vis)) if all_vis else 0
-                }
-        
-        if 'train_losses' in results:
-            summary['results_summary']['training'] = {
-                'epochs': len(results['train_losses']),
-                'final_train_loss': float(results['train_losses'][-1]) if results['train_losses'] else 0,
-                'final_val_loss': float(results['val_losses'][-1]) if results['val_losses'] else 0
-            }
-        
-        # List created files
-        for file in os.listdir(save_dir):
-            if file.endswith(('.png', '.csv', '.json')):
-                summary['files_created'].append(file)
-        
-        # Save summary
-        summary_path = os.path.join(save_dir, 'analysis_summary.json')
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
-        
-        print(f"✅ Summary report saved: {summary_path}")
-        print(f"📁 Total files created: {len(summary['files_created'])}")
 
+    def _create_snr_bar_chart(self, ax, snr_data, config, num_layer_options):
+        """创建SNR柱状图"""
+        # 按模式和配置组织数据
+        modes = list(range(config.num_modes))
+        wavelengths = [450e-9, 550e-9, 650e-9]
         
+        # 为每个模式创建子图数据
+        bar_width = 0.25
+        x_positions = np.arange(len(num_layer_options))
+        
+        colors = ['#3498db', '#e74c3c', '#2ecc71']  # 蓝、红、绿
+        
+        for mode_idx in modes:
+            ax_mode = ax if mode_idx == 0 else plt.subplot(2, 3, mode_idx + 1)
+            
+            for i, wavelength in enumerate(wavelengths):
+                snr_values = []
+                for layers in num_layer_options:
+                    key = f"mode{mode_idx+1}_layers{layers}_wl{wavelength*1e9:.0f}nm"
+                    snr_values.append(snr_data.get(key, 0))
+                
+                ax_mode.bar(x_positions + i * bar_width, snr_values, 
+                        bar_width, label=f'{wavelength*1e9:.0f}nm', 
+                        color=colors[i], alpha=0.8)
+            
+            ax_mode.set_xlabel('Number of Layers')  # Changed from Chinese "层数"
+            ax_mode.set_ylabel('SNR')
+            ax_mode.set_title(f'Mode {mode_idx+1} - SNR Comparison')  # Changed title to English
+            ax_mode.set_xticks(x_positions + bar_width)
+            ax_mode.set_xticklabels(num_layer_options)
+            ax_mode.legend()
+            ax_mode.grid(True, alpha=0.3)
+
+    def _create_snr_heatmap(self, ax, snr_data, config, num_layer_options):
+        """创建SNR热力图"""
+        wavelengths = [450e-9, 550e-9, 650e-9]
+        
+        # 创建热力图数据矩阵
+        heatmap_data = np.zeros((len(wavelengths), len(num_layer_options)))
+        
+        for i, wavelength in enumerate(wavelengths):
+            for j, layers in enumerate(num_layer_options):
+                # 计算所有模式的平均SNR
+                snr_sum = 0
+                count = 0
+                for mode_idx in range(config.num_modes):
+                    key = f"mode{mode_idx+1}_layers{layers}_wl{wavelength*1e9:.0f}nm"
+                    if key in snr_data:
+                        snr_sum += snr_data[key]
+                        count += 1
+                
+                if count > 0:
+                    heatmap_data[i, j] = snr_sum / count
+        
+        # 创建热力图
+        im = ax.imshow(heatmap_data, cmap='YlOrRd', aspect='auto')
+        
+        # 设置标签
+        ax.set_xticks(range(len(num_layer_options)))
+        ax.set_xticklabels(num_layer_options)
+        ax.set_yticks(range(len(wavelengths)))
+        ax.set_yticklabels([f'{wl*1e9:.0f}nm' for wl in wavelengths])
+        
+        # 添加数值标注
+        for i in range(len(wavelengths)):
+            for j in range(len(num_layer_options)):
+                ax.text(j, i, f'{heatmap_data[i, j]:.3f}', 
+                    ha='center', va='center', color='black' if heatmap_data[i, j] < 0.5 else 'white')
+        
+        ax.set_title('SNR Heatmap (Average of All Modes)')  # Changed title to English
+        ax.set_xlabel('Number of Layers')  # Changed from Chinese "层数"
+        ax.set_ylabel('Wavelength')       # Changed from Chinese "波长"
+        
+        # 添加颜色条
+        plt.colorbar(im, ax=ax)
+
+

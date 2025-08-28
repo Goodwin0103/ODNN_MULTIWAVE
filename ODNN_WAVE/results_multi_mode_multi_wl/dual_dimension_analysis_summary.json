@@ -1,0 +1,16 @@
+{
+  "total_configurations": 45,
+  "best_configuration": {
+    "config": "layers_5_mode3_wavelength_450",
+    "cross_score": 0.8781601412896218,
+    "snr_score": 0.5609128475189209,
+    "comprehensive_score": 0.7195364944042714,
+    "snr_db": 11.218256950378418
+  },
+  "performance_distribution": {
+    "excellent": 0,
+    "good": 10,
+    "fair": 21,
+    "poor": 14
+  }
+}

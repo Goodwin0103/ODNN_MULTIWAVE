@@ -1,0 +1,767 @@
+{
+  "4layers_mode1_650nm": {
+    "filename": "MC_single_650nm_mode1_M3_4layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46672821044922,
+    "peak_intensity": 0.031888462603092194,
+    "peak_position": [
+      48.0,
+      154.0
+    ],
+    "centroid_position": [
+      99.60228557091118,
+      99.72679955165847
+    ],
+    "focus_efficiency": 0.0044838739559054375,
+    "uniformity": 1.0355085134506226,
+    "intensity_std": 0.002445527585223317,
+    "intensity_mean": 0.002361668273806572
+  },
+  "2layers_mode2_450nm": {
+    "filename": "MC_single_450nm_mode2_M3_2layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.9602071642875671,
+    "peak_position": [
+      100.0,
+      47.0
+    ],
+    "centroid_position": [
+      98.00651860901984,
+      84.77758268842597
+    ],
+    "focus_efficiency": 0.010043109767138958,
+    "uniformity": 5.947432994842529,
+    "intensity_std": 0.018959496170282364,
+    "intensity_mean": 0.003187845228239894
+  },
+  "3layers_mode2_550nm": {
+    "filename": "MC_single_550nm_mode2_M3_3layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51382446289062,
+    "peak_intensity": 0.9055646061897278,
+    "peak_position": [
+      100.0,
+      100.0
+    ],
+    "centroid_position": [
+      99.56590674734937,
+      97.92460456702817
+    ],
+    "focus_efficiency": 0.1836589127779007,
+    "uniformity": 5.360498428344727,
+    "intensity_std": 0.01708844117820263,
+    "intensity_mean": 0.0031878456939011812
+  },
+  "1layers_mode1_650nm": {
+    "filename": "MC_single_650nm_mode1_M3_1layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46670532226562,
+    "peak_intensity": 0.055953893810510635,
+    "peak_position": [
+      101.0,
+      98.0
+    ],
+    "centroid_position": [
+      97.97808741994288,
+      97.64154775819905
+    ],
+    "focus_efficiency": 0.040838345885276794,
+    "uniformity": 1.725473165512085,
+    "intensity_std": 0.004074994008988142,
+    "intensity_mean": 0.002361667575314641
+  },
+  "4layers_mode2_550nm": {
+    "filename": "MC_single_550nm_mode2_M3_4layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51383972167969,
+    "peak_intensity": 1.2118232250213623,
+    "peak_position": [
+      100.0,
+      99.0
+    ],
+    "centroid_position": [
+      97.24617199425343,
+      100.06896079818634
+    ],
+    "focus_efficiency": 0.17888104915618896,
+    "uniformity": 5.781562328338623,
+    "intensity_std": 0.01843073032796383,
+    "intensity_mean": 0.003187845926731825
+  },
+  "3layers_mode2_650nm": {
+    "filename": "MC_single_650nm_mode2_M3_3layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.5138168334961,
+    "peak_intensity": 0.5475688576698303,
+    "peak_position": [
+      100.0,
+      153.0
+    ],
+    "centroid_position": [
+      99.95072059517146,
+      105.91321354304007
+    ],
+    "focus_efficiency": 0.0022261289414018393,
+    "uniformity": 2.8927805423736572,
+    "intensity_std": 0.009221737273037434,
+    "intensity_mean": 0.0031878454610705376
+  },
+  "2layers_mode1_650nm": {
+    "filename": "MC_single_650nm_mode1_M3_2layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46670532226562,
+    "peak_intensity": 0.03125319629907608,
+    "peak_position": [
+      111.0,
+      99.0
+    ],
+    "centroid_position": [
+      99.17779837137496,
+      99.55336033710043
+    ],
+    "focus_efficiency": 0.01028810627758503,
+    "uniformity": 1.138999581336975,
+    "intensity_std": 0.0026899382937699556,
+    "intensity_mean": 0.002361667575314641
+  },
+  "3layers_mode1_550nm": {
+    "filename": "MC_single_550nm_mode1_M3_3layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46672058105469,
+    "peak_intensity": 0.4100802540779114,
+    "peak_position": [
+      47.0,
+      100.0
+    ],
+    "centroid_position": [
+      92.86144329974776,
+      97.36370660182982
+    ],
+    "focus_efficiency": 0.0143372667953372,
+    "uniformity": 3.606797695159912,
+    "intensity_std": 0.008518058806657791,
+    "intensity_mean": 0.0023616680409759283
+  },
+  "5layers_mode3_450nm": {
+    "filename": "MC_single_450nm_mode3_M3_5layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51383972167969,
+    "peak_intensity": 1.1260733604431152,
+    "peak_position": [
+      153.0,
+      47.0
+    ],
+    "centroid_position": [
+      112.35540406048882,
+      85.55188382086936
+    ],
+    "focus_efficiency": 0.0028465830255299807,
+    "uniformity": 6.9928131103515625,
+    "intensity_std": 0.022292010486125946,
+    "intensity_mean": 0.003187845926731825
+  },
+  "3layers_mode1_650nm": {
+    "filename": "MC_single_650nm_mode1_M3_3layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46672058105469,
+    "peak_intensity": 0.03055769018828869,
+    "peak_position": [
+      14.0,
+      199.0
+    ],
+    "centroid_position": [
+      99.27930569557117,
+      100.03123671769691
+    ],
+    "focus_efficiency": 0.01307764369994402,
+    "uniformity": 1.1282060146331787,
+    "intensity_std": 0.00266444799490273,
+    "intensity_mean": 0.0023616680409759283
+  },
+  "3layers_mode3_450nm": {
+    "filename": "MC_single_450nm_mode3_M3_3layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.5138168334961,
+    "peak_intensity": 1.0428451299667358,
+    "peak_position": [
+      153.0,
+      47.0
+    ],
+    "centroid_position": [
+      110.07428164280884,
+      85.4040299408569
+    ],
+    "focus_efficiency": 0.0029113315977156162,
+    "uniformity": 6.17827844619751,
+    "intensity_std": 0.019695397466421127,
+    "intensity_mean": 0.0031878454610705376
+  },
+  "4layers_mode3_650nm": {
+    "filename": "MC_single_650nm_mode3_M3_4layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.40396541357040405,
+    "peak_position": [
+      154.0,
+      154.0
+    ],
+    "centroid_position": [
+      103.62640535223163,
+      101.44994006171754
+    ],
+    "focus_efficiency": 0.0015125013887882233,
+    "uniformity": 2.3737030029296875,
+    "intensity_std": 0.007566997781395912,
+    "intensity_mean": 0.003187845228239894
+  },
+  "2layers_mode2_550nm": {
+    "filename": "MC_single_550nm_mode2_M3_2layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51380157470703,
+    "peak_intensity": 0.6959872245788574,
+    "peak_position": [
+      100.0,
+      100.0
+    ],
+    "centroid_position": [
+      97.72926533139241,
+      96.49406489022432
+    ],
+    "focus_efficiency": 0.14179199934005737,
+    "uniformity": 4.291694641113281,
+    "intensity_std": 0.013681257143616676,
+    "intensity_mean": 0.0031878449954092503
+  },
+  "1layers_mode2_550nm": {
+    "filename": "MC_single_550nm_mode2_M3_1layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.20662233233451843,
+    "peak_position": [
+      100.0,
+      35.0
+    ],
+    "centroid_position": [
+      99.45680438127235,
+      90.3884027632092
+    ],
+    "focus_efficiency": 0.008532525040209293,
+    "uniformity": 2.167398452758789,
+    "intensity_std": 0.00690933084115386,
+    "intensity_mean": 0.003187845228239894
+  },
+  "1layers_mode3_650nm": {
+    "filename": "MC_single_650nm_mode3_M3_1layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.5137939453125,
+    "peak_intensity": 0.08551695197820663,
+    "peak_position": [
+      180.0,
+      21.0
+    ],
+    "centroid_position": [
+      107.02718922418103,
+      91.41684660860221
+    ],
+    "focus_efficiency": 0.005486821290105581,
+    "uniformity": 1.5434978008270264,
+    "intensity_std": 0.004920431412756443,
+    "intensity_mean": 0.0031878447625786066
+  },
+  "4layers_mode1_550nm": {
+    "filename": "MC_single_550nm_mode1_M3_4layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46673583984375,
+    "peak_intensity": 0.81569904088974,
+    "peak_position": [
+      46.0,
+      100.0
+    ],
+    "centroid_position": [
+      88.6361603739349,
+      99.86200952246264
+    ],
+    "focus_efficiency": 0.004942133091390133,
+    "uniformity": 5.854697227478027,
+    "intensity_std": 0.013826853595674038,
+    "intensity_mean": 0.0023616685066372156
+  },
+  "4layers_mode2_650nm": {
+    "filename": "MC_single_650nm_mode2_M3_4layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51383209228516,
+    "peak_intensity": 0.4425545632839203,
+    "peak_position": [
+      100.0,
+      154.0
+    ],
+    "centroid_position": [
+      99.40547430344029,
+      105.4842297153807
+    ],
+    "focus_efficiency": 0.001260434160940349,
+    "uniformity": 2.605910301208496,
+    "intensity_std": 0.008307239972054958,
+    "intensity_mean": 0.0031878456939011812
+  },
+  "5layers_mode2_550nm": {
+    "filename": "MC_single_550nm_mode2_M3_5layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51385498046875,
+    "peak_intensity": 1.2171130180358887,
+    "peak_position": [
+      101.0,
+      100.0
+    ],
+    "centroid_position": [
+      99.72505056360508,
+      100.10496461738431
+    ],
+    "focus_efficiency": 0.2015591263771057,
+    "uniformity": 6.371477127075195,
+    "intensity_std": 0.02031129039824009,
+    "intensity_mean": 0.003187846392393112
+  },
+  "1layers_mode1_450nm": {
+    "filename": "MC_single_450nm_mode1_M3_1layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46672058105469,
+    "peak_intensity": 0.10277310758829117,
+    "peak_position": [
+      95.0,
+      47.0
+    ],
+    "centroid_position": [
+      100.45072023661105,
+      88.49144720627794
+    ],
+    "focus_efficiency": 0.00959696713835001,
+    "uniformity": 2.550069808959961,
+    "intensity_std": 0.006022418383508921,
+    "intensity_mean": 0.0023616680409759283
+  },
+  "4layers_mode3_450nm": {
+    "filename": "MC_single_450nm_mode3_M3_4layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51382446289062,
+    "peak_intensity": 1.1410611867904663,
+    "peak_position": [
+      153.0,
+      47.0
+    ],
+    "centroid_position": [
+      112.39204076014431,
+      87.74397821642698
+    ],
+    "focus_efficiency": 0.0024255900643765926,
+    "uniformity": 6.821145057678223,
+    "intensity_std": 0.021744757890701294,
+    "intensity_mean": 0.0031878456939011812
+  },
+  "3layers_mode3_550nm": {
+    "filename": "MC_single_550nm_mode3_M3_3layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51382446289062,
+    "peak_intensity": 0.8075959086418152,
+    "peak_position": [
+      153.0,
+      100.0
+    ],
+    "centroid_position": [
+      108.78244778917886,
+      99.41190594998547
+    ],
+    "focus_efficiency": 0.002557463478296995,
+    "uniformity": 4.928743839263916,
+    "intensity_std": 0.01571207493543625,
+    "intensity_mean": 0.0031878456939011812
+  },
+  "1layers_mode2_450nm": {
+    "filename": "MC_single_450nm_mode2_M3_1layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.22089828550815582,
+    "peak_position": [
+      100.0,
+      47.0
+    ],
+    "centroid_position": [
+      100.41338558125774,
+      94.27871310884308
+    ],
+    "focus_efficiency": 0.007544165011495352,
+    "uniformity": 2.2398183345794678,
+    "intensity_std": 0.0071401940658688545,
+    "intensity_mean": 0.003187845228239894
+  },
+  "5layers_mode2_450nm": {
+    "filename": "MC_single_450nm_mode2_M3_5layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51385498046875,
+    "peak_intensity": 1.664225697517395,
+    "peak_position": [
+      99.0,
+      47.0
+    ],
+    "centroid_position": [
+      98.33822086513545,
+      85.88388069882807
+    ],
+    "focus_efficiency": 0.0014373697340488434,
+    "uniformity": 7.71945333480835,
+    "intensity_std": 0.0246084313839674,
+    "intensity_mean": 0.003187846392393112
+  },
+  "5layers_mode3_550nm": {
+    "filename": "MC_single_550nm_mode3_M3_5layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51383972167969,
+    "peak_intensity": 1.196549892425537,
+    "peak_position": [
+      153.0,
+      100.0
+    ],
+    "centroid_position": [
+      110.75363304606697,
+      100.22584347272421
+    ],
+    "focus_efficiency": 0.0020166044123470783,
+    "uniformity": 6.367886543273926,
+    "intensity_std": 0.020299840718507767,
+    "intensity_mean": 0.003187845926731825
+  },
+  "1layers_mode2_650nm": {
+    "filename": "MC_single_650nm_mode2_M3_1layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.08431930094957352,
+    "peak_position": [
+      100.0,
+      22.0
+    ],
+    "centroid_position": [
+      96.28936899285348,
+      94.17334782253253
+    ],
+    "focus_efficiency": 0.01110475230962038,
+    "uniformity": 1.5642019510269165,
+    "intensity_std": 0.004986433777958155,
+    "intensity_mean": 0.003187845228239894
+  },
+  "3layers_mode1_450nm": {
+    "filename": "MC_single_450nm_mode1_M3_3layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46672821044922,
+    "peak_intensity": 0.8770847320556641,
+    "peak_position": [
+      47.0,
+      47.0
+    ],
+    "centroid_position": [
+      85.55129234028804,
+      83.76067301420709
+    ],
+    "focus_efficiency": 0.003425917122513056,
+    "uniformity": 7.10062313079834,
+    "intensity_std": 0.01676931604743004,
+    "intensity_mean": 0.002361668273806572
+  },
+  "2layers_mode3_450nm": {
+    "filename": "MC_single_450nm_mode3_M3_2layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.7607688307762146,
+    "peak_position": [
+      153.0,
+      47.0
+    ],
+    "centroid_position": [
+      108.88583052435571,
+      87.01465058458717
+    ],
+    "focus_efficiency": 0.003338159527629614,
+    "uniformity": 4.984096050262451,
+    "intensity_std": 0.015888527035713196,
+    "intensity_mean": 0.003187845228239894
+  },
+  "5layers_mode1_550nm": {
+    "filename": "MC_single_550nm_mode1_M3_5layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46674346923828,
+    "peak_intensity": 1.0244052410125732,
+    "peak_position": [
+      47.0,
+      100.0
+    ],
+    "centroid_position": [
+      88.25131724313258,
+      100.93368039918062
+    ],
+    "focus_efficiency": 0.011123730801045895,
+    "uniformity": 6.981522560119629,
+    "intensity_std": 0.01648804172873497,
+    "intensity_mean": 0.0023616685066372156
+  },
+  "5layers_mode1_450nm": {
+    "filename": "MC_single_450nm_mode1_M3_5layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46673583984375,
+    "peak_intensity": 1.0476837158203125,
+    "peak_position": [
+      46.0,
+      46.0
+    ],
+    "centroid_position": [
+      83.18816731777326,
+      83.46827642770423
+    ],
+    "focus_efficiency": 0.002126894425600767,
+    "uniformity": 8.280941009521484,
+    "intensity_std": 0.019556837156414986,
+    "intensity_mean": 0.0023616685066372156
+  },
+  "5layers_mode1_650nm": {
+    "filename": "MC_single_650nm_mode1_M3_5layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46673583984375,
+    "peak_intensity": 0.3221640884876251,
+    "peak_position": [
+      49.0,
+      153.0
+    ],
+    "centroid_position": [
+      93.33977481640137,
+      106.25749163481636
+    ],
+    "focus_efficiency": 0.001568182255141437,
+    "uniformity": 2.894258737564087,
+    "intensity_std": 0.0068352799862623215,
+    "intensity_mean": 0.0023616685066372156
+  },
+  "4layers_mode2_450nm": {
+    "filename": "MC_single_450nm_mode2_M3_4layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51382446289062,
+    "peak_intensity": 1.0988459587097168,
+    "peak_position": [
+      99.0,
+      47.0
+    ],
+    "centroid_position": [
+      98.74106572907952,
+      86.74417429329641
+    ],
+    "focus_efficiency": 0.0022303657606244087,
+    "uniformity": 6.447412490844727,
+    "intensity_std": 0.020553356036543846,
+    "intensity_mean": 0.0031878456939011812
+  },
+  "2layers_mode2_650nm": {
+    "filename": "MC_single_650nm_mode2_M3_2layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.11523081362247467,
+    "peak_position": [
+      100.0,
+      153.0
+    ],
+    "centroid_position": [
+      101.6782646698513,
+      98.49788892609376
+    ],
+    "focus_efficiency": 0.013827888295054436,
+    "uniformity": 1.4112592935562134,
+    "intensity_std": 0.004498876165598631,
+    "intensity_mean": 0.003187845228239894
+  },
+  "5layers_mode2_650nm": {
+    "filename": "MC_single_650nm_mode2_M3_5layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51383972167969,
+    "peak_intensity": 0.6536979675292969,
+    "peak_position": [
+      100.0,
+      154.0
+    ],
+    "centroid_position": [
+      99.49174936868758,
+      107.40579759946847
+    ],
+    "focus_efficiency": 0.0019194146152585745,
+    "uniformity": 3.8354625701904297,
+    "intensity_std": 0.012226863764226437,
+    "intensity_mean": 0.003187845926731825
+  },
+  "2layers_mode3_550nm": {
+    "filename": "MC_single_550nm_mode3_M3_2layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.38795527815818787,
+    "peak_position": [
+      153.0,
+      99.0
+    ],
+    "centroid_position": [
+      109.62509991844675,
+      96.22074757424302
+    ],
+    "focus_efficiency": 0.0057138982228934765,
+    "uniformity": 2.682908058166504,
+    "intensity_std": 0.008552695624530315,
+    "intensity_mean": 0.003187845228239894
+  },
+  "4layers_mode3_550nm": {
+    "filename": "MC_single_550nm_mode3_M3_4layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51383972167969,
+    "peak_intensity": 1.012730598449707,
+    "peak_position": [
+      153.0,
+      100.0
+    ],
+    "centroid_position": [
+      110.40703541999457,
+      99.41854690156717
+    ],
+    "focus_efficiency": 0.003305986989289522,
+    "uniformity": 5.825680732727051,
+    "intensity_std": 0.01857137307524681,
+    "intensity_mean": 0.003187845926731825
+  },
+  "3layers_mode3_650nm": {
+    "filename": "MC_single_650nm_mode3_M3_3layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.51380920410156,
+    "peak_intensity": 0.053576499223709106,
+    "peak_position": [
+      195.0,
+      197.0
+    ],
+    "centroid_position": [
+      99.82641690986894,
+      99.44582583145812
+    ],
+    "focus_efficiency": 0.0022720047272741795,
+    "uniformity": 1.0641118288040161,
+    "intensity_std": 0.0033922239672392607,
+    "intensity_mean": 0.003187845228239894
+  },
+  "1layers_mode1_550nm": {
+    "filename": "MC_single_550nm_mode1_M3_1layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46672058105469,
+    "peak_intensity": 0.03458269312977791,
+    "peak_position": [
+      165.0,
+      41.0
+    ],
+    "centroid_position": [
+      100.19145079710214,
+      97.55886275017217
+    ],
+    "focus_efficiency": 0.011437149718403816,
+    "uniformity": 1.3419705629348755,
+    "intensity_std": 0.003169288858771324,
+    "intensity_mean": 0.0023616680409759283
+  },
+  "2layers_mode1_550nm": {
+    "filename": "MC_single_550nm_mode1_M3_2layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46672058105469,
+    "peak_intensity": 0.08749702572822571,
+    "peak_position": [
+      47.0,
+      101.0
+    ],
+    "centroid_position": [
+      100.89429474264736,
+      95.05729512704619
+    ],
+    "focus_efficiency": 0.018017884343862534,
+    "uniformity": 1.5279440879821777,
+    "intensity_std": 0.0036084966268390417,
+    "intensity_mean": 0.0023616680409759283
+  },
+  "4layers_mode1_450nm": {
+    "filename": "MC_single_450nm_mode1_M3_4layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 94.46673583984375,
+    "peak_intensity": 0.9327829480171204,
+    "peak_position": [
+      47.0,
+      47.0
+    ],
+    "centroid_position": [
+      85.37317109335265,
+      83.80594523946542
+    ],
+    "focus_efficiency": 0.0036543472670018673,
+    "uniformity": 7.735560894012451,
+    "intensity_std": 0.018268831074237823,
+    "intensity_mean": 0.0023616685066372156
+  },
+  "1layers_mode3_450nm": {
+    "filename": "MC_single_450nm_mode3_M3_1layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.5137939453125,
+    "peak_intensity": 0.5346412658691406,
+    "peak_position": [
+      153.0,
+      47.0
+    ],
+    "centroid_position": [
+      112.1838040171193,
+      85.6266406818714
+    ],
+    "focus_efficiency": 0.005454403813928366,
+    "uniformity": 4.209347724914551,
+    "intensity_std": 0.01341874711215496,
+    "intensity_mean": 0.0031878447625786066
+  },
+  "2layers_mode1_450nm": {
+    "filename": "MC_single_450nm_mode1_M3_2layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 94.46672058105469,
+    "peak_intensity": 0.5661773085594177,
+    "peak_position": [
+      47.0,
+      47.0
+    ],
+    "centroid_position": [
+      88.62432445558157,
+      82.559294553042
+    ],
+    "focus_efficiency": 0.004908461589366198,
+    "uniformity": 5.556285858154297,
+    "intensity_std": 0.013122103177011013,
+    "intensity_mean": 0.0023616680409759283
+  },
+  "2layers_mode3_650nm": {
+    "filename": "MC_single_650nm_mode3_M3_2layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51380157470703,
+    "peak_intensity": 0.03599206730723381,
+    "peak_position": [
+      96.0,
+      94.0
+    ],
+    "centroid_position": [
+      103.81209848560592,
+      100.66583468955076
+    ],
+    "focus_efficiency": 0.005250248592346907,
+    "uniformity": 1.0873486995697021,
+    "intensity_std": 0.003466299269348383,
+    "intensity_mean": 0.0031878449954092503
+  },
+  "3layers_mode2_450nm": {
+    "filename": "MC_single_450nm_mode2_M3_3layers_TestSim_0.0000_20250828_0204.npy",
+    "total_intensity": 127.5138168334961,
+    "peak_intensity": 1.0951052904129028,
+    "peak_position": [
+      100.0,
+      47.0
+    ],
+    "centroid_position": [
+      100.25289635856359,
+      87.01407685189311
+    ],
+    "focus_efficiency": 0.003017157083377242,
+    "uniformity": 6.252140045166016,
+    "intensity_std": 0.019930856302380562,
+    "intensity_mean": 0.0031878454610705376
+  },
+  "5layers_mode3_650nm": {
+    "filename": "MC_single_650nm_mode3_M3_5layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51383972167969,
+    "peak_intensity": 0.7745388150215149,
+    "peak_position": [
+      153.0,
+      153.0
+    ],
+    "centroid_position": [
+      107.69381613108068,
+      108.10735643890065
+    ],
+    "focus_efficiency": 0.002172579523175955,
+    "uniformity": 4.2406744956970215,
+    "intensity_std": 0.013518616557121277,
+    "intensity_mean": 0.003187845926731825
+  },
+  "1layers_mode3_550nm": {
+    "filename": "MC_single_550nm_mode3_M3_1layers_TestSim_0.0000_20250828_0210.npy",
+    "total_intensity": 127.51380157470703,
+    "peak_intensity": 0.2121957540512085,
+    "peak_position": [
+      166.0,
+      34.0
+    ],
+    "centroid_position": [
+      109.462679894587,
+      88.43828811266688
+    ],
+    "focus_efficiency": 0.0021526645869016647,
+    "uniformity": 2.285116672515869,
+    "intensity_std": 0.007284597493708134,
+    "intensity_mean": 0.0031878449954092503
+  }
+}
