@@ -2,18 +2,98 @@ import os
 import re
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from light_propagation_simulation_qz import propagation_multi
 import matplotlib.pyplot as plt
 
+def apply_zero_padding(field, padding_ratio=0.2):
+    """
+    对光场应用 zero padding
+    
+    Args:
+        field: 输入光场 (B, C, H, W) 或 (H, W)
+        padding_ratio: padding 比例，例如 0.2 表示在每边添加 20% 的零
+    
+    Returns:
+        padded_field: 添加 padding 后的光场
+        original_slice: 用于恢复原始尺寸的切片信息
+    """
+    if field.dim() == 2:
+        # 处理 2D 相位掩膜
+        H, W = field.shape
+        pad_h = int(H * padding_ratio)
+        pad_w = int(W * padding_ratio)
+        padded_field = F.pad(field, (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
+        original_slice = (slice(pad_h, pad_h + H), slice(pad_w, pad_w + W))
+    else:
+        # 处理 4D 光场
+        B, C, H, W = field.shape
+        pad_h = int(H * padding_ratio)
+        pad_w = int(W * padding_ratio)
+        padded_field = F.pad(field, (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
+        original_slice = (slice(pad_h, pad_h + H), slice(pad_w, pad_w + W))
+    
+    return padded_field, original_slice
+
+def remove_padding(field, original_slice):
+    """
+    移除 padding，恢复到原始尺寸
+    
+    Args:
+        field: 带 padding 的光场
+        original_slice: 原始区域的切片信息
+    
+    Returns:
+        cropped_field: 裁剪后的光场
+    """
+    return field[..., original_slice[0], original_slice[1]]
+
+def apply_boundary_apodization(field, apodization_width=10):
+    """
+    在边界应用渐变衰减，避免硬截断
+    
+    Args:
+        field: 输入光场
+        apodization_width: 衰减区域宽度
+    
+    Returns:
+        apodized_field: 应用边界衰减后的光场
+    """
+    if field.dim() == 2:
+        H, W = field.shape
+    else:
+        H, W = field.shape[-2:]
+    
+    # 创建衰减掩膜
+    y, x = torch.meshgrid(torch.arange(H, device=field.device), 
+                         torch.arange(W, device=field.device), indexing='ij')
+    
+    # 计算到边界的最小距离
+    dist_to_edge = torch.minimum(
+        torch.minimum(x, W - 1 - x),
+        torch.minimum(y, H - 1 - y)
+    ).float()
+    
+    # 创建平滑的衰减函数
+    apodization_mask = torch.clamp(dist_to_edge / apodization_width, 0, 1)
+    
+    return field * apodization_mask
+
 class WavelengthDependentDiffractionLayer(nn.Module):
-    def __init__(self, units: int, dx: float, wavelengths: np.ndarray, z: float, layer_idx: int = 0):
+    def __init__(self, units: int, dx: float, wavelengths: np.ndarray, z: float, 
+                 layer_idx: int = 0, padding_ratio: float = 0.2, 
+                 use_apodization: bool = True, apodization_width: int = 10):
         super().__init__()
         self.units = units
         self.dx = dx
         self.wavelengths = wavelengths
         self.z = z
         self.layer_idx = layer_idx
+        self.padding_ratio = padding_ratio  # 新增：padding 比例
+        self.use_apodization = use_apodization  # 新增：是否使用边界衰减
+        self.apodization_width = apodization_width  # 新增：衰减宽度
+        
         self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
         
         # 基础相位掩膜
@@ -64,25 +144,39 @@ class WavelengthDependentDiffractionLayer(nn.Module):
             
             x_c = x[:, c:c+1]
             
-            # 能量保持的相位调制
-            phase_modulation = torch.exp(1j * phase_scaled)
-            x_c = x_c * phase_modulation
+            # 1. 应用 zero padding
+            x_c_padded, original_slice = apply_zero_padding(x_c, self.padding_ratio)
             
-            # 能量归一化
-            input_energy = torch.mean(torch.abs(x_c)**2)
+            # 2. 相位掩膜也需要相应地 padding（用零填充）
+            phase_scaled_padded, _ = apply_zero_padding(phase_scaled, self.padding_ratio)
             
-            x_c = propagation_multi(
-                x_c, z=self.z,
+            # 3. 可选：应用边界衰减，避免硬截断效应
+            if self.use_apodization:
+                x_c_padded = apply_boundary_apodization(x_c_padded, self.apodization_width)
+            
+            # 4. 能量保持的相位调制
+            phase_modulation = torch.exp(1j * phase_scaled_padded)
+            x_c_padded = x_c_padded * phase_modulation
+            
+            # 5. 能量归一化
+            input_energy = torch.mean(torch.abs(x_c_padded)**2)
+            
+            # 6. 传播（在 padding 后的空间中进行）
+            x_c_padded = propagation_multi(
+                x_c_padded, z=self.z,
                 wavelengths=[self.lam_list[c]], 
                 pixel_size=self.dx, 
                 device=x.device
             )
             
-            # 能量恢复
-            output_energy = torch.mean(torch.abs(x_c)**2)
+            # 7. 能量恢复
+            output_energy = torch.mean(torch.abs(x_c_padded)**2)
             if output_energy > 1e-8:
                 energy_ratio = torch.sqrt(input_energy / output_energy)
-                x_c = x_c * energy_ratio.clamp(0.5, 2.0)
+                x_c_padded = x_c_padded * energy_ratio.clamp(0.5, 2.0)
+            
+            # 8. 移除 padding，恢复到原始尺寸
+            x_c = remove_padding(x_c_padded, original_slice)
             
             results.append(x_c)
         
@@ -107,15 +201,22 @@ class WavelengthDependentDiffractionLayer(nn.Module):
             'wavelength_masks': wavelength_masks,
             'coefficients': self.wavelength_coefficients.detach().cpu().numpy(),
             'wavelengths': self.wavelengths,
-            'coefficient_type': 'wavelength_inverse'
+            'coefficient_type': 'wavelength_inverse',
+            'padding_ratio': self.padding_ratio,
+            'use_apodization': self.use_apodization
         }
 
 class WavelengthDependentPropagation(nn.Module):
-    def __init__(self, dx: float, wavelengths: np.ndarray, z: float):
+    def __init__(self, dx: float, wavelengths: np.ndarray, z: float, 
+                 padding_ratio: float = 0.2, use_apodization: bool = True, 
+                 apodization_width: int = 10):
         super().__init__()
         self.dx = dx
         self.wavelengths = wavelengths
         self.z = z
+        self.padding_ratio = padding_ratio
+        self.use_apodization = use_apodization
+        self.apodization_width = apodization_width
         self.register_buffer("lam_list", torch.as_tensor(wavelengths, dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -128,12 +229,25 @@ class WavelengthDependentPropagation(nn.Module):
         
         for c in range(min(C, len(self.wavelengths))):
             x_c = x[:, c:c+1]
-            x_c = propagation_multi(
-                x_c, z=self.z, 
+            
+            # 1. 应用 zero padding
+            x_c_padded, original_slice = apply_zero_padding(x_c, self.padding_ratio)
+            
+            # 2. 可选：应用边界衰减
+            if self.use_apodization:
+                x_c_padded = apply_boundary_apodization(x_c_padded, self.apodization_width)
+            
+            # 3. 传播
+            x_c_padded = propagation_multi(
+                x_c_padded, z=self.z, 
                 wavelengths=[self.lam_list[c]],
                 pixel_size=self.dx, 
                 device=x.device
             )
+            
+            # 4. 移除 padding
+            x_c = remove_padding(x_c_padded, original_slice)
+            
             results.append(x_c)
         
         output = torch.cat(results, dim=1)
@@ -144,21 +258,29 @@ class RegressionDetector(nn.Module):
         return torch.square(torch.abs(inputs))
 
 class WavelengthDependentD2NNModel(nn.Module):
-    def __init__(self, config, num_layers: int):
+    def __init__(self, config, num_layers: int, padding_ratio: float = 0.2, 
+                 use_apodization: bool = True, apodization_width: int = 10):
         super().__init__()
         self.config = config
         self.num_layers = num_layers
+        self.padding_ratio = padding_ratio
+        self.use_apodization = use_apodization
+        self.apodization_width = apodization_width
         
         self.layers = nn.ModuleList([
             WavelengthDependentDiffractionLayer(
                 config.layer_size, config.pixel_size,
                 config.wavelengths, config.z_layers, 
-                layer_idx=i
+                layer_idx=i, padding_ratio=padding_ratio,
+                use_apodization=use_apodization,
+                apodization_width=apodization_width
             ) for i in range(num_layers)
         ])
         
         self.propagation = WavelengthDependentPropagation(
-            config.pixel_size, config.wavelengths, config.z_prop
+            config.pixel_size, config.wavelengths, config.z_prop,
+            padding_ratio=padding_ratio, use_apodization=use_apodization,
+            apodization_width=apodization_width
         )
         self.regression = RegressionDetector()
 
@@ -196,11 +318,17 @@ class WavelengthDependentD2NNModel(nn.Module):
             'layer_size': self.config.layer_size,
             'pixel_size': self.config.pixel_size,
             'z_layers': self.config.z_layers,
-            'z_prop': self.config.z_prop
+            'z_prop': self.config.z_prop,
+            'padding_ratio': self.padding_ratio,
+            'use_apodization': self.use_apodization,
+            'apodization_width': self.apodization_width
         }
         
         np.savez(save_path, **masks_data)
         print(f"✓ 训练好的相位掩码已保存到: {save_path}")
+        print(f"  - Padding ratio: {self.padding_ratio}")
+        print(f"  - Use apodization: {self.use_apodization}")
+        print(f"  - Apodization width: {self.apodization_width}")
         
         return save_path
 
@@ -218,6 +346,9 @@ class WavelengthDependentD2NNModel(nn.Module):
             print(f"  层数: {num_layers}")
             print(f"  波长数: {len(config_data['wavelengths'])}")
             print(f"  掩码尺寸: {config_data['layer_size']}")
+            print(f"  Padding ratio: {config_data.get('padding_ratio', 0.2)}")
+            print(f"  Use apodization: {config_data.get('use_apodization', True)}")
+            print(f"  Apodization width: {config_data.get('apodization_width', 10)}")
             
             for layer_idx in range(num_layers):
                 layer_key = f'layer_{layer_idx}'
@@ -243,6 +374,9 @@ class WavelengthDependentD2NNModel(nn.Module):
     def print_phase_masks(self, save_path=None):
         """打印所有层的相位掩膜"""
         print("\n====== 模型所有相位掩膜信息 ======")
+        print(f"Padding ratio: {self.padding_ratio}")
+        print(f"Use apodization: {self.use_apodization}")
+        print(f"Apodization width: {self.apodization_width}")
         
         for i, layer in enumerate(self.layers):
             mask_data = layer.get_phase_masks()
@@ -277,11 +411,13 @@ class WavelengthDependentD2NNModel(nn.Module):
                 os.makedirs(save_path, exist_ok=True)
                 plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
                 print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
-            # else:
-            #     plt.show()
+            
+            plt.close()
 
 class PhysicsBasedMultiWavelengthLayer(nn.Module):
-    def __init__(self, units, pixel_size, wavelengths, z_distance, num_modes, layer_idx=0):
+    def __init__(self, units, pixel_size, wavelengths, z_distance, num_modes, 
+                 layer_idx=0, padding_ratio=0.2, use_apodization=True, 
+                 apodization_width=10):
         super().__init__()
         
         self.units = units
@@ -290,6 +426,9 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         self.z_distance = z_distance
         self.num_modes = num_modes
         self.layer_idx = layer_idx
+        self.padding_ratio = padding_ratio
+        self.use_apodization = use_apodization
+        self.apodization_width = apodization_width
         
         # 基础相位掩膜
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
@@ -305,7 +444,8 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         
         # 初始化传播器
         self.propagator = WavelengthDependentPropagation(
-            pixel_size, wavelengths, z_distance
+            pixel_size, wavelengths, z_distance, padding_ratio, 
+            use_apodization, apodization_width
         )
     
     def _calculate_wavelength_coefficients(self, wavelengths):
@@ -340,12 +480,23 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         for i in range(num_wavelengths):
             field = x[:, i:i+1, :, :]
             
-            # 使用物理计算的系数
+            # 1. 应用 zero padding
+            field_padded, original_slice = apply_zero_padding(field, self.padding_ratio)
+            
+            # 2. 相位掩膜也需要相应地 padding
             coefficient = self.wavelength_coefficients[i]
             effective_phase = self.phase * coefficient * self.depth_factor
+            effective_phase_padded, _ = apply_zero_padding(effective_phase, self.padding_ratio)
             
-            # 应用相位掩膜
-            field = field * torch.exp(1j * effective_phase)
+            # 3. 可选：应用边界衰减
+            if self.use_apodization:
+                field_padded = apply_boundary_apodization(field_padded, self.apodization_width)
+            
+            # 4. 应用相位掩膜
+            field_padded = field_padded * torch.exp(1j * effective_phase_padded)
+            
+            # 5. 移除 padding，恢复到原始尺寸
+            field = remove_padding(field_padded, original_slice)
             
             outputs.append(field)
         
@@ -379,12 +530,19 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
             'wavelength_masks': wavelength_masks,
             'coefficients': self.wavelength_coefficients.detach().cpu().numpy(),
             'wavelengths': self.wavelengths,
-            'coefficient_type': 'wavelength_inverse'
+            'coefficient_type': 'wavelength_inverse',
+            'padding_ratio': self.padding_ratio,
+            'use_apodization': self.use_apodization
         }
 
 class MultiModeMultiWavelengthModel(nn.Module):
-    def __init__(self, config, num_layers):
+    def __init__(self, config, num_layers, padding_ratio=0.2, use_apodization=True, 
+                 apodization_width=10):
         super().__init__()
+        
+        self.padding_ratio = padding_ratio
+        self.use_apodization = use_apodization
+        self.apodization_width = apodization_width
         
         self.layers = nn.ModuleList([
             PhysicsBasedMultiWavelengthLayer(
@@ -393,12 +551,16 @@ class MultiModeMultiWavelengthModel(nn.Module):
                 config.wavelengths, 
                 config.z_layers,
                 config.num_modes, 
-                layer_idx=i
+                layer_idx=i,
+                padding_ratio=padding_ratio,
+                use_apodization=use_apodization,
+                apodization_width=apodization_width
             ) for i in range(num_layers)
         ])
         
         self.final_propagation = WavelengthDependentPropagation(
-            config.pixel_size, config.wavelengths, config.z_prop
+            config.pixel_size, config.wavelengths, config.z_prop,
+            padding_ratio, use_apodization, apodization_width
         )
         self.detector = RegressionDetector()
         self.config = config
@@ -441,11 +603,17 @@ class MultiModeMultiWavelengthModel(nn.Module):
             'pixel_size': self.config.pixel_size,
             'z_layers': self.config.z_layers,
             'z_prop': self.config.z_prop,
-            'num_modes': getattr(self.config, 'num_modes', 3)
+            'num_modes': getattr(self.config, 'num_modes', 3),
+            'padding_ratio': self.padding_ratio,
+            'use_apodization': self.use_apodization,
+            'apodization_width': self.apodization_width
         }
         
         np.savez(save_path, **masks_data)
         print(f"✓ 训练好的相位掩码已保存到: {save_path}")
+        print(f"  - Padding ratio: {self.padding_ratio}")
+        print(f"  - Use apodization: {self.use_apodization}")
+        print(f"  - Apodization width: {self.apodization_width}")
         
         return save_path
 
@@ -463,6 +631,9 @@ class MultiModeMultiWavelengthModel(nn.Module):
             print(f"  层数: {num_layers}")
             print(f"  波长数: {len(config_data['wavelengths'])}")
             print(f"  掩码尺寸: {config_data['layer_size']}")
+            print(f"  Padding ratio: {config_data.get('padding_ratio', 0.2)}")
+            print(f"  Use apodization: {config_data.get('use_apodization', True)}")
+            print(f"  Apodization width: {config_data.get('apodization_width', 10)}")
             
             for layer_idx in range(num_layers):
                 layer_key = f'layer_{layer_idx}'
@@ -477,43 +648,47 @@ class MultiModeMultiWavelengthModel(nn.Module):
         except Exception as e:
             print(f"✗ 加载掩码文件失败: {e}")
             return None, None
-    
+
     def get_all_phase_masks(self):
-        """获取所有相位掩膜"""
+        """获取所有层的相位掩膜数据"""
         all_masks = []
-        for i, layer in enumerate(self.layers):
-            wavelength_masks = layer.get_effective_phase_masks()
-            for j, mask in enumerate(wavelength_masks):
-                all_masks.append(mask)
-                print(f"层 {i} 相位掩膜 {j} (对应波长 {self.config.wavelengths[j]*1e9:.1f}nm):")
-                print(f"  形状: {mask.shape}")
-                print(f"  范围: [{mask.min():.4f}, {mask.max():.4f}]")
-                print(f"  平均值: {mask.mean():.4f}")
-                print(f"  标准差: {mask.std():.4f}")
+        for layer in self.layers:
+            all_masks.append(layer.get_phase_masks())
         return all_masks
-    
+
     def print_phase_masks(self, save_path=None):
         """打印所有层的相位掩膜"""
-        print("\n====== 模型所有相位掩膜信息 ======")
+        print("\n====== 多模式多波长模型所有相位掩膜信息 ======")
+        print(f"Padding ratio: {self.padding_ratio}")
+        print(f"Use apodization: {self.use_apodization}")
+        print(f"Apodization width: {self.apodization_width}")
         
         for i, layer in enumerate(self.layers):
-            wavelength_masks = layer.get_effective_phase_masks()
+            mask_data = layer.get_phase_masks()
+            base_mask = mask_data['base_mask']
+            wavelength_masks = mask_data['wavelength_masks']
+            coefficients = mask_data['coefficients']
+            wavelengths = mask_data['wavelengths']
             
             print(f"\n== 层 {i} 相位掩膜信息 ==")
-            print(f"基础相位掩膜形状: {wavelength_masks[0].shape}")
-            print(f"基础相位掩膜范围: [{np.min(wavelength_masks[0]):.4f}, {np.max(wavelength_masks[0]):.4f}]")
-            print(f"波长系数: {layer.wavelength_coefficients.detach().cpu().numpy()}")
+            print(f"基础相位掩膜形状: {base_mask.shape}")
+            print(f"基础相位掩膜范围: [{np.min(base_mask):.4f}, {np.max(base_mask):.4f}]")
+            print(f"波长系数 (λ₀/λ): {coefficients}")
             
-            n_wavelengths = len(self.config.wavelengths)
-            fig, axes = plt.subplots(1, n_wavelengths, figsize=(5*n_wavelengths, 5))
+            # 创建图形
+            n_wavelengths = len(wavelengths)
+            fig, axes = plt.subplots(1, n_wavelengths + 1, figsize=(5*(n_wavelengths+1), 5))
             
-            if n_wavelengths == 1:
-                axes = [axes]
+            # 绘制基础相位掩膜
+            im0 = axes[0].imshow(base_mask, cmap='viridis')
+            axes[0].set_title(f"Layer {i} Base Phase")
+            plt.colorbar(im0, ax=axes[0], label='Phase (rad)')
             
-            for j, (mask, wl) in enumerate(zip(wavelength_masks, self.config.wavelengths)):
-                im = axes[j].imshow(mask, cmap='viridis')
-                axes[j].set_title(f"λ={wl*1e9:.0f}nm\nCoef={layer.wavelength_coefficients[j].item():.4f}")
-                plt.colorbar(im, ax=axes[j], label='Phase (rad)')
+            # 绘制每个波长的相位掩膜
+            for j, (mask, coef, wl) in enumerate(zip(wavelength_masks, coefficients, wavelengths)):
+                im = axes[j+1].imshow(mask, cmap='viridis')
+                axes[j+1].set_title(f"λ={wl*1e9:.0f}nm\nCoef={coef:.4f}")
+                plt.colorbar(im, ax=axes[j+1], label='Phase (rad)')
             
             plt.tight_layout()
             
@@ -521,6 +696,5 @@ class MultiModeMultiWavelengthModel(nn.Module):
                 os.makedirs(save_path, exist_ok=True)
                 plt.savefig(f"{save_path}/phase_mask_layer_{i}.png")
                 print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
-            # else:
-                # plt.show()
+            
             plt.close()

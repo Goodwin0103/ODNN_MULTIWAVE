@@ -5,10 +5,10 @@ import csv
 import json
 import glob
 import re
-from datetime import datetime
 import matplotlib.patches as patches
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Rectangle, Circle
 import seaborn as sns
+from tomlkit import datetime
 
 class Visualizer:
     def __init__(self, config):
@@ -1097,112 +1097,314 @@ Region Information:
     def create_snr_analysis_visualization(self, real_visibility_data, config, num_layer_options, 
                                         save_path=None, title_suffix=""):
         """
-        创建专门的SNR分析可视化
+        创建增强的SNR分析可视化 - 柱状图版本
         """
         if not real_visibility_data:
             print("❌ 没有可用的双维度可见度数据")
-            return
+            return None
         
         # 提取SNR数据
         snr_data = {}
-        cross_data = {}
-        
         for key, data in real_visibility_data.items():
-            if 'snr_score' in data and 'cross_score' in data:
+            if 'snr_score' in data:
                 snr_data[key] = data['snr_score']
-                cross_data[key] = data['cross_score']
         
         if not snr_data:
             print("❌ 没有找到SNR数据")
-            return
+            return None
         
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        # 创建2x2布局的柱状图可视化
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig.suptitle(f'SNR Analysis Dashboard - Bar Chart Format{title_suffix}', 
+                    fontsize=18, fontweight='bold', y=0.95)
         
-        # 1. SNR热力图 - 全局概览
-        self._create_snr_heatmap(ax1, data, config, num_layer_options)
+        # 1. 主要SNR柱状图 (左上)
+        self._create_snr_bar_chart(axes[0, 0], snr_data, config, num_layer_options)
         
-        # 2. SNR柱状图 - 精确对比  
-        self._create_snr_bar_chart(ax2, data, config, num_layer_options)
+        # 2. 按波长分组的柱状图 (右上)
+        self._create_wavelength_grouped_bar_chart(axes[0, 1], snr_data, config, num_layer_options)
         
+        # 3. 按层数分组的柱状图 (左下)
+        self._create_layer_grouped_bar_chart(axes[1, 0], snr_data, config, num_layer_options)
+        
+        # 4. 综合性能对比柱状图 (右下)
+        self._create_comprehensive_bar_chart(axes[1, 1], snr_data, config, num_layer_options)
+
         plt.tight_layout()
-        return fig
-            
-                
+        plt.subplots_adjust(top=0.90, bottom=0.15)
+        
+        if save_path is None:
+            save_path = os.path.join(config.save_dir, f'snr_analysis_bar_charts{title_suffix}.png')
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.close()
+        
+        print(f"✅ SNR柱状图分析已保存: {save_path}")
+        
+        # 返回关键统计信息
+        return {
+            'optimal_snr': max(snr_data.values()) if snr_data else 0,
+            'optimal_config': self._find_optimal_config_from_data(snr_data),
+            'total_configs': len(snr_data),
+            'average_snr': np.mean(list(snr_data.values())) if snr_data else 0
+        }
 
     def _create_snr_bar_chart(self, ax, snr_data, config, num_layer_options):
-        """创建SNR柱状图"""
-        # 按模式和配置组织数据
+        """创建主要SNR柱状图 - 按层数和模式分组"""
+        # 组织数据：按层数分组，每个层数显示不同模式的平均SNR
         modes = list(range(config.num_modes))
-        wavelengths = [450e-9, 550e-9, 650e-9]
-        
-        # 为每个模式创建子图数据
         bar_width = 0.25
         x_positions = np.arange(len(num_layer_options))
         
         colors = ['#3498db', '#e74c3c', '#2ecc71']  # 蓝、红、绿
         
         for mode_idx in modes:
-            ax_mode = ax if mode_idx == 0 else plt.subplot(2, 3, mode_idx + 1)
-            
-            for i, wavelength in enumerate(wavelengths):
-                snr_values = []
-                for layers in num_layer_options:
-                    key = f"mode{mode_idx+1}_layers{layers}_wl{wavelength*1e9:.0f}nm"
-                    snr_values.append(snr_data.get(key, 0))
+            snr_values = []
+            for layers in num_layer_options:
+                # 计算该层数和模式下所有波长的平均SNR
+                mode_layer_values = []
+                for key, value in snr_data.items():
+                    if f'mode{mode_idx+1}' in key and f'layers{layers}' in key:
+                        mode_layer_values.append(value)
                 
-                ax_mode.bar(x_positions + i * bar_width, snr_values, 
-                        bar_width, label=f'{wavelength*1e9:.0f}nm', 
-                        color=colors[i], alpha=0.8)
+                avg_snr = np.mean(mode_layer_values) if mode_layer_values else 0
+                snr_values.append(avg_snr)
             
-            ax_mode.set_xlabel('Number of Layers')  # Changed from Chinese "层数"
-            ax_mode.set_ylabel('SNR')
-            ax_mode.set_title(f'Mode {mode_idx+1} - SNR Comparison')  # Changed title to English
-            ax_mode.set_xticks(x_positions + bar_width)
-            ax_mode.set_xticklabels(num_layer_options)
-            ax_mode.legend()
-            ax_mode.grid(True, alpha=0.3)
+            # 创建柱状图
+            bars = ax.bar(x_positions + mode_idx * bar_width, snr_values, 
+                        bar_width, label=f'Mode {mode_idx+1}', 
+                        color=colors[mode_idx], alpha=0.8, edgecolor='black')
+            
+            # 添加数值标注
+            for bar, value in zip(bars, snr_values):
+                if value > 0:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                        f'{value:.3f}', ha='center', va='bottom', 
+                        fontweight='bold', fontsize=9)
+        
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Average SNR', fontsize=12, fontweight='bold')
+        ax.set_title('SNR Performance by Layers and Modes', fontsize=14, fontweight='bold')
+        ax.set_xticks(x_positions + bar_width)
+        ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
 
-    def _create_snr_heatmap(self, ax, snr_data, config, num_layer_options):
-        """创建SNR热力图"""
-        wavelengths = [450e-9, 550e-9, 650e-9]
+    def _create_wavelength_grouped_bar_chart(self, ax, snr_data, config, num_layer_options):
+        """按波长分组的柱状图"""
+        wavelengths = [450, 550, 650]
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
         
-        # 创建热力图数据矩阵
-        heatmap_data = np.zeros((len(wavelengths), len(num_layer_options)))
+        # 准备数据
+        wl_data = {wl: [] for wl in wavelengths}
         
-        for i, wavelength in enumerate(wavelengths):
-            for j, layers in enumerate(num_layer_options):
-                # 计算所有模式的平均SNR
-                snr_sum = 0
-                count = 0
-                for mode_idx in range(config.num_modes):
-                    key = f"mode{mode_idx+1}_layers{layers}_wl{wavelength*1e9:.0f}nm"
-                    if key in snr_data:
-                        snr_sum += snr_data[key]
-                        count += 1
-                
-                if count > 0:
-                    heatmap_data[i, j] = snr_sum / count
+        for key, snr_value in snr_data.items():
+            for wl in wavelengths:
+                if f'{wl}nm' in key:
+                    wl_data[wl].append(snr_value)
+                    break
         
-        # 创建热力图
-        im = ax.imshow(heatmap_data, cmap='YlOrRd', aspect='auto')
+        # 计算统计数据
+        wl_means = []
+        wl_stds = []
+        wl_labels = []
+        bar_colors = []
         
-        # 设置标签
-        ax.set_xticks(range(len(num_layer_options)))
-        ax.set_xticklabels(num_layer_options)
-        ax.set_yticks(range(len(wavelengths)))
-        ax.set_yticklabels([f'{wl*1e9:.0f}nm' for wl in wavelengths])
+        for i, wl in enumerate(wavelengths):
+            if wl_data[wl]:
+                wl_means.append(np.mean(wl_data[wl]))
+                wl_stds.append(np.std(wl_data[wl]))
+                wl_labels.append(f'{wl}nm\n({len(wl_data[wl])} configs)')
+                bar_colors.append(colors[i])
+            else:
+                wl_means.append(0)
+                wl_stds.append(0)
+                wl_labels.append(f'{wl}nm\n(0 configs)')
+                bar_colors.append('#cccccc')
+        
+        # 创建柱状图
+        bars = ax.bar(range(len(wavelengths)), wl_means, 
+                    color=bar_colors, alpha=0.8, edgecolor='black', linewidth=1,
+                    yerr=wl_stds, capsize=5, error_kw={'linewidth': 2})
         
         # 添加数值标注
-        for i in range(len(wavelengths)):
-            for j in range(len(num_layer_options)):
-                ax.text(j, i, f'{heatmap_data[i, j]:.3f}', 
-                    ha='center', va='center', color='black' if heatmap_data[i, j] < 0.5 else 'white')
+        for i, (bar, mean_val, std_val) in enumerate(zip(bars, wl_means, wl_stds)):
+            if mean_val > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + std_val + 0.01,
+                    f'{mean_val:.3f}', ha='center', va='bottom', 
+                    fontweight='bold', fontsize=11)
         
-        ax.set_title('SNR Heatmap (Average of All Modes)')  # Changed title to English
-        ax.set_xlabel('Number of Layers')  # Changed from Chinese "层数"
-        ax.set_ylabel('Wavelength')       # Changed from Chinese "波长"
+        # 标记最佳波长
+        if wl_means and max(wl_means) > 0:
+            best_idx = np.argmax(wl_means)
+            best_bar = bars[best_idx]
+            ax.text(best_bar.get_x() + best_bar.get_width()/2, 
+                best_bar.get_height() + wl_stds[best_idx] + 0.03,
+                '★ BEST', ha='center', va='bottom', 
+                fontsize=12, color='gold', fontweight='bold')
         
-        # 添加颜色条
-        plt.colorbar(im, ax=ax)
+        ax.set_title('SNR Performance by Wavelength', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Wavelength', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Average SNR ± Std', fontsize=12, fontweight='bold')
+        ax.set_xticks(range(len(wavelengths)))
+        ax.set_xticklabels(wl_labels)
+        ax.grid(True, alpha=0.3, axis='y')
 
+    def _create_layer_grouped_bar_chart(self, ax, snr_data, config, num_layer_options):
+        """按层数分组的柱状图"""
+        # 准备数据
+        layer_data = {layers: [] for layers in num_layer_options}
+        
+        for key, snr_value in snr_data.items():
+            for layers in num_layer_options:
+                if f'layers{layers}' in key or f'L{layers}_' in key:
+                    layer_data[layers].append(snr_value)
+                    break
+        
+        # 计算统计数据
+        layer_means = []
+        layer_stds = []
+        layer_labels = []
+        bar_colors = []
+        
+        # 使用渐变色
+        cmap = plt.cm.viridis
+        colors = [cmap(i / max(1, len(num_layer_options) - 1)) for i in range(len(num_layer_options))]
+        
+        for i, layers in enumerate(num_layer_options):
+            if layer_data[layers]:
+                layer_means.append(np.mean(layer_data[layers]))
+                layer_stds.append(np.std(layer_data[layers]))
+                layer_labels.append(f'{layers} Layers\n({len(layer_data[layers])} configs)')
+                bar_colors.append(colors[i])
+            else:
+                layer_means.append(0)
+                layer_stds.append(0)
+                layer_labels.append(f'{layers} Layers\n(0 configs)')
+                bar_colors.append('#cccccc')
+        
+        # 创建柱状图
+        bars = ax.bar(range(len(num_layer_options)), layer_means, 
+                    color=bar_colors, alpha=0.8, edgecolor='black', linewidth=1,
+                    yerr=layer_stds, capsize=5, error_kw={'linewidth': 2})
+        
+        # 添加数值标注
+        for i, (bar, mean_val, std_val) in enumerate(zip(bars, layer_means, layer_stds)):
+            if mean_val > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + std_val + 0.01,
+                f'{mean_val:.3f}', ha='center', va='bottom', 
+                fontweight='bold', fontsize=11)
+        
+        # 标记最佳层数
+        if layer_means and max(layer_means) > 0:
+            best_idx = np.argmax(layer_means)
+            best_bar = bars[best_idx]
+            ax.text(best_bar.get_x() + best_bar.get_width()/2, 
+                best_bar.get_height() + layer_stds[best_idx] + 0.03,
+                '★ BEST', ha='center', va='bottom', 
+                fontsize=12, color='gold', fontweight='bold')
+        
+        ax.set_title('SNR Performance by Layer Count', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Average SNR ± Std', fontsize=12, fontweight='bold')
+        ax.set_xticks(range(len(num_layer_options)))
+        ax.set_xticklabels(layer_labels)
+        ax.grid(True, alpha=0.3, axis='y')
 
+    def _create_comprehensive_bar_chart(self, ax, snr_data, config, num_layer_options):
+        """综合性能对比柱状图 - 显示所有配置"""
+        # 准备所有配置的数据
+        configs = []
+        values = []
+        colors = []
+        
+        # 颜色映射
+        wavelength_colors = {450: '#1f77b4', 550: '#ff7f0e', 650: '#2ca02c'}
+        
+        for key, snr_value in snr_data.items():
+            # 解析配置信息
+            try:
+                # 提取波长
+                wavelength = None
+                for wl in [450, 550, 650]:
+                    if f'{wl}nm' in key:
+                        wavelength = wl
+                        break
+                
+                # 提取层数
+                layers = None
+                for layer_num in num_layer_options:
+                    if f'layers{layer_num}' in key or f'L{layer_num}_' in key:
+                        layers = layer_num
+                        break
+                
+                # 提取模式
+                mode = None
+                if 'mode' in key:
+                    parts = key.split('_')
+                    for part in parts:
+                        if part.startswith('mode'):
+                            mode = int(part.replace('mode', ''))
+                            break
+                elif '_M' in key:
+                    # 处理 L5_M2_550nm 格式
+                    parts = key.split('_M')
+                    if len(parts) > 1:
+                        mode_part = parts[1].split('_')[0]
+                        mode = int(mode_part)
+                
+                if wavelength and layers and mode:
+                    config_label = f'{wavelength}nm\n{layers}L-M{mode}'
+                    configs.append(config_label)
+                    values.append(snr_value)
+                    colors.append(wavelength_colors.get(wavelength, '#gray'))
+                    
+            except Exception as e:
+                continue
+        
+        if not values:
+            ax.text(0.5, 0.5, 'No Data Available', ha='center', va='center', 
+                    transform=ax.transAxes, fontsize=14)
+            return
+        
+        # 按性能排序
+        sorted_data = sorted(zip(configs, values, colors), key=lambda x: x[1], reverse=True)
+        configs, values, colors = zip(*sorted_data)
+        
+        # 只显示前15个配置（避免过于拥挤）
+        if len(configs) > 15:
+            configs = configs[:15]
+            values = values[:15]
+            colors = colors[:15]
+        
+        # 创建柱状图
+        bars = ax.bar(range(len(configs)), values, color=colors, alpha=0.8, 
+                    edgecolor='black', linewidth=1)
+        
+        # 添加数值标注
+        max_val = max(values) if values else 1
+        for i, (bar, value) in enumerate(zip(bars, values)):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max_val * 0.01,
+                f'{value:.3f}', ha='center', va='bottom', 
+                fontweight='bold', fontsize=9, rotation=0)
+            
+            # 标记前3名
+            if i < 3:
+                rank_colors = ['gold', 'silver', '#CD7F32']  # 金银铜
+                rank_labels = ['1st', '2nd', '3rd']
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max_val * 0.05,
+                    rank_labels[i], ha='center', va='bottom', 
+                    fontsize=10, color=rank_colors[i], fontweight='bold')
+        
+        ax.set_title('Top Performing Configurations', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Configuration (Wavelength-Layers-Mode)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('SNR Score', fontsize=12, fontweight='bold')
+        ax.set_xticks(range(len(configs)))
+        ax.set_xticklabels(configs, rotation=45, ha='right', fontsize=9)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # 添加图例
+        legend_elements = [plt.Rectangle((0,0),1,1, facecolor=color, alpha=0.8, edgecolor='black') 
+                        for color in wavelength_colors.values()]
+        ax.legend(legend_elements, [f'{wl}nm' for wl in wavelength_colors.keys()], 
+                loc='upper right', title='Wavelength', fontsize=10)
