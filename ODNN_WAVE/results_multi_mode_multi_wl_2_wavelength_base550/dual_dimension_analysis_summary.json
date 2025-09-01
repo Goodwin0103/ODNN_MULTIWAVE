@@ -1,0 +1,16 @@
+{
+  "total_configurations": 30,
+  "best_configuration": {
+    "config": "layers_5_mode1_wavelength_550nm",
+    "cross_score": 0.9510630645758198,
+    "snr_score": 0.5018630027770996,
+    "comprehensive_score": 0.7264630336764597,
+    "snr_db": 10.037260055541992
+  },
+  "performance_distribution": {
+    "excellent": 0,
+    "good": 7,
+    "fair": 11,
+    "poor": 12
+  }
+}

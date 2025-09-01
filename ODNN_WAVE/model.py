@@ -83,7 +83,8 @@ def apply_boundary_apodization(field, apodization_width=10):
 class WavelengthDependentDiffractionLayer(nn.Module):
     def __init__(self, units: int, dx: float, wavelengths: np.ndarray, z: float, 
                  layer_idx: int = 0, padding_ratio: float = 0.2, 
-                 use_apodization: bool = True, apodization_width: int = 10):
+                 use_apodization: bool = True, apodization_width: int = 10,
+                 base_wavelength_idx: int = 1):  # *** 新增参数 ***
         super().__init__()
         self.units = units
         self.dx = dx
@@ -99,8 +100,8 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         # 基础相位掩膜
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
-        # 设置基准波长索引 选择最大波长
-        self.base_wavelength_idx = 1
+        # *** 修改：从参数获取基准波长索引 ***
+        self.base_wavelength_idx = base_wavelength_idx
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)
@@ -116,7 +117,7 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         base_wavelength = wavelengths[self.base_wavelength_idx]
         coefficients = []
         
-        print(f"计算波长系数 (基准波长: {base_wavelength*1e9:.1f}nm)")
+        print(f"计算波长系数 (基准波长索引: {self.base_wavelength_idx}, 波长: {base_wavelength*1e9:.1f}nm)")
         
         for wl in wavelengths:
             # 波长反比关系：λ₀/λ
@@ -202,6 +203,7 @@ class WavelengthDependentDiffractionLayer(nn.Module):
             'coefficients': self.wavelength_coefficients.detach().cpu().numpy(),
             'wavelengths': self.wavelengths,
             'coefficient_type': 'wavelength_inverse',
+            'base_wavelength_idx': self.base_wavelength_idx,  # *** 新增 ***
             'padding_ratio': self.padding_ratio,
             'use_apodization': self.use_apodization
         }
@@ -273,7 +275,8 @@ class WavelengthDependentD2NNModel(nn.Module):
                 config.wavelengths, config.z_layers, 
                 layer_idx=i, padding_ratio=padding_ratio,
                 use_apodization=use_apodization,
-                apodization_width=apodization_width
+                apodization_width=apodization_width,
+                base_wavelength_idx=config.base_wavelength_idx  # *** 传递config参数 ***
             ) for i in range(num_layers)
         ])
         
@@ -319,6 +322,7 @@ class WavelengthDependentD2NNModel(nn.Module):
             'pixel_size': self.config.pixel_size,
             'z_layers': self.config.z_layers,
             'z_prop': self.config.z_prop,
+            'base_wavelength_idx': self.config.base_wavelength_idx,  # *** 新增 ***
             'padding_ratio': self.padding_ratio,
             'use_apodization': self.use_apodization,
             'apodization_width': self.apodization_width
@@ -326,6 +330,7 @@ class WavelengthDependentD2NNModel(nn.Module):
         
         np.savez(save_path, **masks_data)
         print(f"✓ 训练好的相位掩码已保存到: {save_path}")
+        print(f"  - Base wavelength idx: {self.config.base_wavelength_idx}")
         print(f"  - Padding ratio: {self.padding_ratio}")
         print(f"  - Use apodization: {self.use_apodization}")
         print(f"  - Apodization width: {self.apodization_width}")
@@ -346,6 +351,7 @@ class WavelengthDependentD2NNModel(nn.Module):
             print(f"  层数: {num_layers}")
             print(f"  波长数: {len(config_data['wavelengths'])}")
             print(f"  掩码尺寸: {config_data['layer_size']}")
+            print(f"  Base wavelength idx: {config_data.get('base_wavelength_idx', 1)}")
             print(f"  Padding ratio: {config_data.get('padding_ratio', 0.2)}")
             print(f"  Use apodization: {config_data.get('use_apodization', True)}")
             print(f"  Apodization width: {config_data.get('apodization_width', 10)}")
@@ -374,6 +380,7 @@ class WavelengthDependentD2NNModel(nn.Module):
     def print_phase_masks(self, save_path=None):
         """打印所有层的相位掩膜"""
         print("\n====== 模型所有相位掩膜信息 ======")
+        print(f"Base wavelength index: {self.config.base_wavelength_idx}")
         print(f"Padding ratio: {self.padding_ratio}")
         print(f"Use apodization: {self.use_apodization}")
         print(f"Apodization width: {self.apodization_width}")
@@ -393,6 +400,8 @@ class WavelengthDependentD2NNModel(nn.Module):
             # 创建图形
             n_wavelengths = len(wavelengths)
             fig, axes = plt.subplots(1, n_wavelengths + 1, figsize=(5*(n_wavelengths+1), 5))
+            if n_wavelengths == 0:  # 防止只有一个子图时的索引错误
+                axes = [axes]
             
             # 绘制基础相位掩膜
             im0 = axes[0].imshow(base_mask, cmap='viridis')
@@ -417,7 +426,7 @@ class WavelengthDependentD2NNModel(nn.Module):
 class PhysicsBasedMultiWavelengthLayer(nn.Module):
     def __init__(self, units, pixel_size, wavelengths, z_distance, num_modes, 
                  layer_idx=0, padding_ratio=0.2, use_apodization=True, 
-                 apodization_width=10):
+                 apodization_width=10, base_wavelength_idx=1):  # *** 新增参数 ***
         super().__init__()
         
         self.units = units
@@ -433,8 +442,8 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         # 基础相位掩膜
         self.phase = nn.Parameter(torch.rand(units, units) * np.pi)  
         
-        # 设置基准波长索引
-        self.base_wavelength_idx = 1
+        # *** 修改：从参数获取基准波长索引 ***
+        self.base_wavelength_idx = base_wavelength_idx
         
         # 根据波长反比关系计算相位延迟系数
         self.wavelength_coefficients = self._calculate_wavelength_coefficients(wavelengths)
@@ -455,7 +464,7 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         base_wavelength = wavelengths[self.base_wavelength_idx]
         coefficients = []
         
-        print(f"计算波长系数 (基准波长: {base_wavelength*1e9:.1f}nm)")
+        print(f"计算波长系数 (基准波长索引: {self.base_wavelength_idx}, 波长: {base_wavelength*1e9:.1f}nm)")
         
         for wl in wavelengths:
             # 波长反比关系：λ₀/λ
@@ -531,6 +540,7 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
             'coefficients': self.wavelength_coefficients.detach().cpu().numpy(),
             'wavelengths': self.wavelengths,
             'coefficient_type': 'wavelength_inverse',
+            'base_wavelength_idx': self.base_wavelength_idx,  # *** 新增 ***
             'padding_ratio': self.padding_ratio,
             'use_apodization': self.use_apodization
         }
@@ -554,7 +564,8 @@ class MultiModeMultiWavelengthModel(nn.Module):
                 layer_idx=i,
                 padding_ratio=padding_ratio,
                 use_apodization=use_apodization,
-                apodization_width=apodization_width
+                apodization_width=apodization_width,
+                base_wavelength_idx=config.base_wavelength_idx  # *** 传递config参数 ***
             ) for i in range(num_layers)
         ])
         
@@ -604,6 +615,7 @@ class MultiModeMultiWavelengthModel(nn.Module):
             'z_layers': self.config.z_layers,
             'z_prop': self.config.z_prop,
             'num_modes': getattr(self.config, 'num_modes', 3),
+            'base_wavelength_idx': self.config.base_wavelength_idx,  # *** 新增 ***
             'padding_ratio': self.padding_ratio,
             'use_apodization': self.use_apodization,
             'apodization_width': self.apodization_width
@@ -611,6 +623,7 @@ class MultiModeMultiWavelengthModel(nn.Module):
         
         np.savez(save_path, **masks_data)
         print(f"✓ 训练好的相位掩码已保存到: {save_path}")
+        print(f"  - Base wavelength idx: {self.config.base_wavelength_idx}")
         print(f"  - Padding ratio: {self.padding_ratio}")
         print(f"  - Use apodization: {self.use_apodization}")
         print(f"  - Apodization width: {self.apodization_width}")
@@ -631,6 +644,7 @@ class MultiModeMultiWavelengthModel(nn.Module):
             print(f"  层数: {num_layers}")
             print(f"  波长数: {len(config_data['wavelengths'])}")
             print(f"  掩码尺寸: {config_data['layer_size']}")
+            print(f"  Base wavelength idx: {config_data.get('base_wavelength_idx', 1)}")
             print(f"  Padding ratio: {config_data.get('padding_ratio', 0.2)}")
             print(f"  Use apodization: {config_data.get('use_apodization', True)}")
             print(f"  Apodization width: {config_data.get('apodization_width', 10)}")
@@ -659,6 +673,7 @@ class MultiModeMultiWavelengthModel(nn.Module):
     def print_phase_masks(self, save_path=None):
         """打印所有层的相位掩膜"""
         print("\n====== 多模式多波长模型所有相位掩膜信息 ======")
+        print(f"Base wavelength index: {self.config.base_wavelength_idx}")
         print(f"Padding ratio: {self.padding_ratio}")
         print(f"Use apodization: {self.use_apodization}")
         print(f"Apodization width: {self.apodization_width}")
@@ -678,6 +693,8 @@ class MultiModeMultiWavelengthModel(nn.Module):
             # 创建图形
             n_wavelengths = len(wavelengths)
             fig, axes = plt.subplots(1, n_wavelengths + 1, figsize=(5*(n_wavelengths+1), 5))
+            if n_wavelengths == 0:  # 防止只有一个子图时的索引错误
+                axes = [axes]
             
             # 绘制基础相位掩膜
             im0 = axes[0].imshow(base_mask, cmap='viridis')
@@ -698,3 +715,4 @@ class MultiModeMultiWavelengthModel(nn.Module):
                 print(f"已保存层 {i} 的相位掩膜图像到 {save_path}/phase_mask_layer_{i}.png")
             
             plt.close()
+

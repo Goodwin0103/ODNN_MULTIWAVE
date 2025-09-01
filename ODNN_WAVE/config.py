@@ -35,6 +35,9 @@ class Config:
     z_step: float = 20e-6                             # 传播步长(m)
     pixel_size: float = 1e-6                          # 像素大小(m)
     
+    # *** 新增：基准波长配置 ***
+    base_wavelength_idx: int = 1                      # 基准波长索引（默认选择中间波长）
+    
     # 检测区域偏移 - 为每个波长定义不同的偏移
     offsets: List[Tuple[int, int]] = field(default_factory=default_offsets)  # 每个波长的检测区域偏移
     
@@ -48,7 +51,7 @@ class Config:
     save_dir: str = "./results_multi_mode_multi_wl/"  # 保存目录
     flag_savemat: bool = True                         # 是否保存.mat文件
     
-    # *** 新增：设备配置 ***
+    # 设备配置
     device: torch.device = field(default_factory=default_device)  # 计算设备
     
     def __post_init__(self):
@@ -65,13 +68,22 @@ class Config:
             
             print(f"已调整offsets数量以匹配波长数量: {len(self.wavelengths)}")
         
+        # *** 新增：验证基准波长索引 ***
+        if self.base_wavelength_idx < 0 or self.base_wavelength_idx >= len(self.wavelengths):
+            print(f"⚠ 基准波长索引 {self.base_wavelength_idx} 超出范围，自动调整为中间波长")
+            self.base_wavelength_idx = len(self.wavelengths) // 2
+        
+        # 显示基准波长信息
+        base_wl = self.wavelengths[self.base_wavelength_idx]
+        print(f"✓ 基准波长设置: 索引 {self.base_wavelength_idx} -> {base_wl*1e9:.1f}nm")
+        
         # 创建保存目录
         os.makedirs(self.save_dir, exist_ok=True)
         
-        # *** 新增：打印设备信息 ***
+        # 打印设备信息
         print(f"配置完成，使用设备: {self.device}")
         
-        # *** 新增：验证设备可用性 ***
+        # 验证设备可用性
         if self.device.type == 'cuda' and not torch.cuda.is_available():
             print("⚠ CUDA不可用，自动切换到CPU")
             self.device = torch.device('cpu')

@@ -2084,7 +2084,8 @@ class SeparatedDimensionVisualizer(Visualizer):
         colors = []
         
         # 颜色映射
-        wavelength_colors = {450: '#1f77b4', 550: '#ff7f0e', 650: '#2ca02c'}
+        cmap = plt.get_cmap('viridis')
+        color_indices = np.linspace(0, 1, config.num_modes)
         
         for key in cross_matrix_data.keys():
             if key in snr_data:
@@ -2095,22 +2096,20 @@ class SeparatedDimensionVisualizer(Visualizer):
                 snr_values.append(snr_val)
                 labels.append(key)
                 
-                # 根据波长着色
-                color = '#gray'
-                for wl, wl_color in wavelength_colors.items():
-                    if f'{wl}nm' in key:
-                        color = wl_color
+                # 根据模式索引选择颜色
+                for mode_idx in range(config.num_modes):
+                    if f'mode{mode_idx+1}' in key:
+                        colors.append(cmap(color_indices[mode_idx]))
                         break
-                colors.append(color)
         
         if not cross_values:
             ax.text(0.5, 0.5, 'No Matching Data', ha='center', va='center', 
-                   transform=ax.transAxes, fontsize=14)
+                transform=ax.transAxes, fontsize=14)
             return
         
         # 创建散点图
         scatter = ax.scatter(cross_values, snr_values, c=colors, s=100, 
-                           alpha=0.7, edgecolors='black', linewidth=1)
+                        alpha=0.7, edgecolors='black', linewidth=1)
         
         # 添加对角线
         ax.plot([0, 1], [0, 1], 'r--', alpha=0.5, linewidth=2, label='Equal Performance')
@@ -2122,8 +2121,8 @@ class SeparatedDimensionVisualizer(Visualizer):
             best_idx = np.argmin(distances)
             
             ax.scatter(cross_values[best_idx], snr_values[best_idx], 
-                      s=300, c='red', marker='*', edgecolors='black', linewidth=2,
-                      label=f'Best Overall: {labels[best_idx]}')
+                    s=300, c='red', marker='*', edgecolors='black', linewidth=2,
+                    label=f'Best Overall: {labels[best_idx]}')
         
         ax.set_xlabel('Cross Matrix Focus Concentration', fontsize=12, fontweight='bold')
         ax.set_ylabel('SNR Score (0-1)', fontsize=12, fontweight='bold')
@@ -2135,10 +2134,10 @@ class SeparatedDimensionVisualizer(Visualizer):
         
         # 添加象限标注
         ax.text(0.8, 0.8, 'High Cross\nHigh SNR', ha='center', va='center', 
-               bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.7))
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.7))
         ax.text(0.2, 0.2, 'Low Cross\nLow SNR', ha='center', va='center',
-               bbox=dict(boxstyle="round,pad=0.3", facecolor='lightcoral', alpha=0.7))
-    
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='lightcoral', alpha=0.7))
+
     def _create_correlation_analysis(self, ax, cross_matrix_data, snr_data, config):
         """相关性分析"""
         # 收集匹配的数据

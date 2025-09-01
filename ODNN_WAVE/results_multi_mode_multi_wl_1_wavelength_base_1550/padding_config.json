@@ -1,0 +1,7 @@
+{
+  "padding_ratio": 0.3,
+  "use_apodization": true,
+  "apodization_width": 15,
+  "model_type": "Zero Padding Enhanced",
+  "training_time": 51.94061994552612
+}
