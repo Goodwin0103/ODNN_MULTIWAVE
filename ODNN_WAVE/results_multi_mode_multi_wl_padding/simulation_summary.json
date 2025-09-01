@@ -1,0 +1,15 @@
+{
+  "timestamp": "2025-08-31 21:35:13.459905",
+  "total_models": 5,
+  "successful_simulations": 5,
+  "total_results": 45,
+  "expected_results": 45,
+  "completion_rate": 1.0,
+  "layer_results": {
+    "1": 9,
+    "2": 9,
+    "3": 9,
+    "4": 9,
+    "5": 9
+  }
+}
