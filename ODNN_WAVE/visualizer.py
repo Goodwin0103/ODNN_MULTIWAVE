@@ -2372,3 +2372,270 @@ Correlation Analysis:
         print(f"✅ Cross Matrix数据已保存: {cross_path}")
         print(f"✅ SNR数据已保存: {snr_path}")
 
+    def create_cross_matrix_by_wavelength_separated(self, cross_matrix_data, config, num_layer_options, 
+                                                save_path=None, title_suffix=""):
+        """
+        按波长分离的Cross Matrix可视化 - 创建三个独立的子图
+        """
+        if not cross_matrix_data:
+            print("❌ 没有Cross Matrix数据")
+            return None
+        
+        print("🎨 创建按波长分离的Cross Matrix可视化...")
+        
+        # 获取波长信息
+        wavelengths = [int(wl * 1e9) for wl in config.wavelengths]  # 转换为nm
+        wavelength_labels = [f'{wl}nm' for wl in wavelengths]
+        
+        # 创建1x3布局的子图
+        fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+        fig.suptitle(f'Cross Matrix - Focus Concentration by Wavelength{title_suffix}', 
+                    fontsize=20, fontweight='bold', y=0.95)
+        
+        # 为每个波长创建独立的图表
+        modes = list(range(config.num_modes))
+        mode_colors = ['#3498db', '#e74c3c', '#2ecc71']  # 蓝、红、绿
+        mode_labels = ['Mode 1', 'Mode 2', 'Mode 3']
+        
+        for wl_idx, (wavelength, wl_label) in enumerate(zip(wavelengths, wavelength_labels)):
+            ax = axes[wl_idx]
+            
+            # 为当前波长收集数据
+            bar_width = 0.25
+            x_positions = np.arange(len(num_layer_options))
+            
+            # 存储当前波长的最佳值用于标注
+            best_value = 0
+            best_config = ""
+            
+            for mode_idx in modes:
+                focus_concentrations = []
+                
+                # 收集当前模式和波长的数据
+                for layers in num_layer_options:
+                    mode_layer_values = []
+                    for key, data in cross_matrix_data.items():
+                        if (self._match_config_full(key, layers, mode_idx, wavelength) and 
+                            'focus_concentration' in data):
+                            mode_layer_values.append(data['focus_concentration'])
+                    
+                    avg_focus = np.mean(mode_layer_values) if mode_layer_values else 0
+                    focus_concentrations.append(avg_focus)
+                    
+                    # 更新最佳值
+                    if avg_focus > best_value:
+                        best_value = avg_focus
+                        best_config = f"{layers}L-M{mode_idx+1}"
+                
+                # 创建当前模式的柱状图
+                bars = ax.bar(x_positions + mode_idx * bar_width, focus_concentrations,
+                            bar_width, label=mode_labels[mode_idx],
+                            color=mode_colors[mode_idx], alpha=0.8, 
+                            edgecolor='black', linewidth=1)
+                
+                # 添加数值标注
+                for bar, value in zip(bars, focus_concentrations):
+                    if value > 0.01:  # 只显示有意义的值
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                            f'{value:.3f}', ha='center', va='bottom',
+                            fontweight='bold', fontsize=10)
+            
+            # 设置当前子图的属性
+            ax.set_xlabel('Number of Layers', fontsize=14, fontweight='bold')
+            ax.set_ylabel('Focus Concentration', fontsize=14, fontweight='bold')
+            ax.set_title(f'{wl_label}\nBest: {best_config} ({best_value:.3f})', 
+                        fontsize=16, fontweight='bold')
+            ax.set_xticks(x_positions + bar_width)
+            ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
+            ax.grid(True, alpha=0.3, axis='y')
+            ax.set_ylim(0, 1.0)
+            
+            # 只在第一个子图显示图例
+            if wl_idx == 0:
+                ax.legend(loc='upper right', fontsize=12)
+            
+            # 标注最佳配置
+            if best_value > 0:
+                # 找到最佳柱子并添加星标
+                max_bar_idx = np.argmax([max(ax.patches[i::len(modes)]) 
+                                    for i in range(len(modes))])
+                best_bars = [bar for bar in ax.patches 
+                            if bar.get_height() == best_value]
+                if best_bars:
+                    best_bar = best_bars[0]
+                    ax.text(best_bar.get_x() + best_bar.get_width()/2, 
+                        best_bar.get_height() + 0.05,
+                        '★', ha='center', va='bottom', 
+                        fontsize=20, color='gold', fontweight='bold')
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.85)
+        
+        if save_path is None:
+            save_path = os.path.join(config.save_dir, f'cross_matrix_by_wavelength_separated{title_suffix}.png')
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.show()
+        
+        print(f"✅ 按波长分离的Cross Matrix分析已保存: {save_path}")
+        return fig
+
+    def create_wavelength_performance_comparison(self, cross_matrix_data, config, num_layer_options,
+                                            save_path=None, title_suffix=""):
+        """
+        创建波长性能对比图 - 显示每个波长的整体性能
+        """
+        wavelengths = [int(wl * 1e9) for wl in config.wavelengths]
+        
+        # 创建2x2布局：3个波长图 + 1个总结图
+        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
+        fig.suptitle(f'Cross Matrix Performance by Wavelength{title_suffix}', 
+                    fontsize=18, fontweight='bold', y=0.95)
+        
+        # 前三个位置放波长图
+        positions = [(0, 0), (0, 1), (1, 0)]
+        
+        for wl_idx, wavelength in enumerate(wavelengths):
+            if wl_idx < 3:  # 最多3个波长
+                row, col = positions[wl_idx]
+                ax = axes[row, col]
+                self._create_single_wavelength_plot(ax, cross_matrix_data, config, 
+                                                num_layer_options, wavelength)
+        
+        # 第四个位置放总结对比
+        summary_ax = axes[1, 1]
+        self._create_wavelength_summary_plot(summary_ax, cross_matrix_data, config, 
+                                        num_layer_options, wavelengths)
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.90)
+        
+        if save_path is None:
+            save_path = os.path.join(config.save_dir, f'wavelength_performance_comparison{title_suffix}.png')
+        
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.show()
+        
+        return fig
+
+    def _create_single_wavelength_plot(self, ax, cross_matrix_data, config, num_layer_options, wavelength):
+        """为单个波长创建性能图"""
+        modes = list(range(config.num_modes))
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
+        
+        # 收集数据
+        layer_data = {layers: [] for layers in num_layer_options}
+        
+        for key, data in cross_matrix_data.items():
+            if f'{wavelength}nm' in key and 'focus_concentration' in data:
+                for layers in num_layer_options:
+                    if self._contains_layers(key, layers):
+                        layer_data[layers].append(data['focus_concentration'])
+                        break
+        
+        # 计算每个层数的统计数据
+        layer_means = []
+        layer_stds = []
+        layer_labels = []
+        
+        for layers in num_layer_options:
+            if layer_data[layers]:
+                layer_means.append(np.mean(layer_data[layers]))
+                layer_stds.append(np.std(layer_data[layers]))
+                layer_labels.append(f'{layers}L')
+            else:
+                layer_means.append(0)
+                layer_stds.append(0)
+                layer_labels.append(f'{layers}L')
+        
+        # 创建柱状图
+        bars = ax.bar(range(len(num_layer_options)), layer_means,
+                    color=f'C{wavelength//200}', alpha=0.8, edgecolor='black',
+                    yerr=layer_stds, capsize=5)
+        
+        # 添加数值标注
+        for bar, mean_val, std_val in zip(bars, layer_means, layer_stds):
+            if mean_val > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, 
+                    bar.get_height() + std_val + 0.01,
+                    f'{mean_val:.3f}', ha='center', va='bottom',
+                    fontweight='bold', fontsize=11)
+        
+        # 标记最佳
+        if layer_means and max(layer_means) > 0:
+            best_idx = np.argmax(layer_means)
+            best_bar = bars[best_idx]
+            ax.text(best_bar.get_x() + best_bar.get_width()/2,
+                best_bar.get_height() + layer_stds[best_idx] + 0.03,
+                '★ BEST', ha='center', va='bottom',
+                fontsize=12, color='gold', fontweight='bold')
+        
+        ax.set_title(f'{wavelength}nm Wavelength Performance', fontweight='bold', fontsize=14)
+        ax.set_xlabel('Number of Layers', fontweight='bold')
+        ax.set_ylabel('Focus Concentration', fontweight='bold')
+        ax.set_xticks(range(len(num_layer_options)))
+        ax.set_xticklabels(layer_labels)
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim(0, 1.0)
+
+    def _create_wavelength_summary_plot(self, ax, cross_matrix_data, config, num_layer_options, wavelengths):
+        """创建波长总结对比图"""
+        # 计算每个波长的整体性能
+        wl_performance = {}
+        
+        for wavelength in wavelengths:
+            wl_values = []
+            for key, data in cross_matrix_data.items():
+                if f'{wavelength}nm' in key and 'focus_concentration' in data:
+                    wl_values.append(data['focus_concentration'])
+            
+            if wl_values:
+                wl_performance[wavelength] = {
+                    'mean': np.mean(wl_values),
+                    'std': np.std(wl_values),
+                    'max': np.max(wl_values),
+                    'count': len(wl_values)
+                }
+            else:
+                wl_performance[wavelength] = {
+                    'mean': 0, 'std': 0, 'max': 0, 'count': 0
+                }
+        
+        # 创建对比图
+        wl_labels = [f'{wl}nm' for wl in wavelengths]
+        means = [wl_performance[wl]['mean'] for wl in wavelengths]
+        stds = [wl_performance[wl]['std'] for wl in wavelengths]
+        maxs = [wl_performance[wl]['max'] for wl in wavelengths]
+        
+        x = np.arange(len(wavelengths))
+        width = 0.35
+        
+        bars1 = ax.bar(x - width/2, means, width, label='Average Performance',
+                    alpha=0.8, yerr=stds, capsize=5)
+        bars2 = ax.bar(x + width/2, maxs, width, label='Peak Performance',
+                    alpha=0.8)
+        
+        # 添加数值标注
+        for bar, value in zip(bars1, means):
+            if value > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                    f'{value:.3f}', ha='center', va='bottom', fontweight='bold')
+        
+        for bar, value in zip(bars2, maxs):
+            if value > 0:
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                    f'{value:.3f}', ha='center', va='bottom', fontweight='bold')
+        
+        ax.set_title('Wavelength Performance Summary', fontweight='bold', fontsize=14)
+        ax.set_xlabel('Wavelength', fontweight='bold')
+        ax.set_ylabel('Focus Concentration', fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(wl_labels)
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim(0, 1.0)
+
+    # 辅助方法
+    def _contains_layers(self, key, layers):
+        """检查键是否包含指定层数"""
+        return f'L{layers}_' in key or f'layers{layers}' in key
