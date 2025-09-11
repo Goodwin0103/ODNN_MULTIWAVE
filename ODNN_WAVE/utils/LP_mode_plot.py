@@ -140,3 +140,41 @@ print("📄 SVG: 可缩放矢量图形，适合网页和演示")
 print("📄 PDF: 高质量矢量图，适合论文和印刷")
 print("📄 PNG: 高分辨率位图，适合一般用途")
 print("📄 EPS: 封装PostScript，适合LaTeX文档")
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 加载数据
+eigenmodes = np.load('ODNN_WAVE/eigenmodes_OM4.npy')
+print(f"数据形状: {eigenmodes.shape}")
+
+# 选择前三个模式 (索引 0, 1, 2)
+mode_indices = [0, 1, 2]
+mode_labels = ['LP01', 'LP11a', 'LP11b']
+
+for i, mode_idx in enumerate(mode_indices):
+    # 获取复数场分布
+    mode_field = eigenmodes[:, :, mode_idx]
+    
+    # 计算振幅
+    amplitude = np.abs(mode_field)
+    
+    # 归一化振幅
+    amplitude_norm = amplitude / np.max(amplitude) if np.max(amplitude) > 0 else amplitude
+    
+    # 创建单独的图形
+    plt.figure(figsize=(6, 6))
+    plt.imshow(amplitude_norm, cmap='hot', 
+               extent=[-25, 25, -25, 25], origin='lower')
+    
+    # 移除坐标轴
+    plt.axis('off')
+    
+    # 保存为PNG
+    filename = f'{mode_labels[i]}.png'
+    plt.savefig(filename, format='png', dpi=300, bbox_inches='tight', pad_inches=0)
+    plt.close()
+    
+    print(f"✅ 已保存: {filename}")
+
+print("\n完成！生成了三个单独的振幅分布PNG文件。")

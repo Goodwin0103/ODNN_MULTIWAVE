@@ -948,3 +948,396 @@ class Simulator:
         
         print(f"✅ {layers} 层模型汇总图已保存: {summary_path}")
         print(f"   成功加载 {successful_loads}/{len(files_dict)} 个文件")
+
+    def display_step_by_step_propagation(self, phase_masks, input_fields, mode_idx=0, wavelength_idx=0, 
+                                        save_intermediate=False, show_plots=True, save_dir=None):
+        """
+        显示光场单步传播过程的可视化
+        
+        参数:
+            phase_masks: 相位掩码列表 [num_layers][num_wavelengths][H, W]
+            input_fields: 输入光场 [num_modes, num_wavelengths, H, W] 或其他格式
+            mode_idx: 要显示的模式索引 (默认: 0)
+            wavelength_idx: 要显示的波长索引 (默认: 0)
+            save_intermediate: 是否保存中间结果 (默认: False)
+            show_plots: 是否显示图形 (默认: True)
+            save_dir: 保存目录 (默认: 使用配置中的目录)
+        
+        返回:
+            dict: 包含所有传播步骤的结果
+        """
+        print(f"🎬 显示单步传播过程")
+        print(f"模式索引: {mode_idx}, 波长索引: {wavelength_idx}")
+        
+        # 打印配置信息用于调试（转换为微米）
+        print(f"z_layers: {self.config.z_layers * 1e6:.1f} μm")
+        z_step_um = getattr(self.config, 'z_step', 0) * 1e6 if hasattr(self.config, 'z_step') else 0
+        print(f"z_step: {z_step_um:.1f} μm" if z_step_um > 0 else "z_step: Not defined")
+        print(f"z_prop: {self.config.z_prop * 1e6:.1f} μm")
+        print(f"层数: {len(phase_masks)}")
+        print("="*50)
+        
+        # 设置保存目录
+        if save_dir is None:
+            save_dir = getattr(self.config, 'save_dir', '/home/user')
+        
+        # 确保输入场是 PyTorch 张量
+        if isinstance(input_fields, np.ndarray):
+            input_fields = torch.from_numpy(input_fields.copy())
+        elif not isinstance(input_fields, torch.Tensor):
+            input_fields = torch.tensor(input_fields)
+        
+        # 确保是复数类型
+        if not input_fields.dtype.is_complex:
+            if input_fields.dtype.is_floating_point:
+                input_fields = input_fields.to(torch.complex64)
+            else:
+                input_fields = input_fields.to(torch.float32).to(torch.complex64)
+        
+        # 提取指定模式和波长的输入场
+        if input_fields.ndim == 4:  # [num_modes, num_wavelengths, H, W]
+            if mode_idx >= input_fields.shape[0]:
+                print(f"❌ 模式索引 {mode_idx} 超出范围 (最大: {input_fields.shape[0]-1})")
+                return None
+            if wavelength_idx >= input_fields.shape[1]:
+                print(f"❌ 波长索引 {wavelength_idx} 超出范围 (最大: {input_fields.shape[1]-1})")
+                return None
+            current_field = input_fields[mode_idx, wavelength_idx]
+        elif input_fields.ndim == 3:  # [num_wavelengths, H, W]
+            if wavelength_idx >= input_fields.shape[0]:
+                print(f"❌ 波长索引 {wavelength_idx} 超出范围 (最大: {input_fields.shape[0]-1})")
+                return None
+            current_field = input_fields[wavelength_idx]
+        elif input_fields.ndim == 2:  # [H, W]
+            current_field = input_fields
+        else:
+            print(f"❌ 不支持的输入场维度: {input_fields.shape}")
+            return None
+        
+        print(f"选择的场形状: {current_field.shape}")
+        
+        # 预处理输入场
+        current_field = self._preprocess_field_for_simulation(current_field)
+        current_field = current_field.to(self.device)
+        
+        # 获取波长
+        if wavelength_idx < len(self.config.wavelengths):
+            wavelength = self.config.wavelengths[wavelength_idx]
+            wl_nm = int(wavelength * 1e9)
+            print(f"波长: {wl_nm} nm")
+        else:
+            wavelength = 532e-9  # 默认波长
+            wl_nm = 532
+            print(f"使用默认波长: {wl_nm} nm")
+        
+        # 存储传播步骤
+        propagation_steps = {}
+        propagation_history = []
+        
+        # 初始场
+        propagation_steps['initial'] = {
+            'field': current_field.clone(),
+            'description': 'Initial Input Field',
+            'step_type': 'initial',
+            'distance_um': 0.0
+        }
+        propagation_history.append(('initial', current_field.clone()))
+        print(f"✓ 步骤 0: 初始输入场 (0.0 μm)")
+        
+        # 逐层传播
+        num_layers = len(phase_masks)
+        step_counter = 1
+        current_distance = 0  # 保持米为单位进行计算
+        
+        for layer_idx in range(num_layers):
+            print(f"\n--- 第 {layer_idx+1} 层 ---")
+            
+            # 应用相位掩码
+            if layer_idx < len(phase_masks) and wavelength_idx < len(phase_masks[layer_idx]):
+                phase_mask = phase_masks[layer_idx][wavelength_idx]
+                current_field = self._apply_phase_mask(current_field, phase_mask)
+                
+                # 保存应用掩码后的场
+                step_key = f'layer_{layer_idx+1}_after_mask'
+                propagation_steps[step_key] = {
+                    'field': current_field.clone(),
+                    'description': f'Layer {layer_idx+1} - After Phase Mask',
+                    'step_type': 'after_mask',
+                    'layer_idx': layer_idx,
+                    'distance_um': current_distance * 1e6
+                }
+                propagation_history.append((step_key, current_field.clone()))
+                print(f"✓ 步骤 {step_counter}: 应用第{layer_idx+1}层相位掩码 ({current_distance * 1e6:.1f} μm)")
+                step_counter += 1
+            
+            # 传播到下一层或检测平面
+            # 确定传播距离
+            if layer_idx < num_layers - 1:
+                total_distance = self.config.z_layers
+            else:
+                total_distance = self.config.z_prop
+            
+            # 计算需要的步数
+            if hasattr(self.config, 'z_step') and self.config.z_step > 0:
+                num_steps = max(1, int(total_distance / self.config.z_step))
+                step_distance = total_distance / num_steps
+            else:
+                # 如果没有定义 z_step 或者 z_step <= 0，使用默认分步
+                num_steps = 5  # 默认分为5步
+                step_distance = total_distance / num_steps
+            
+            print(f"传播距离: {total_distance*1e6:.1f} μm, 分为 {num_steps} 步, 每步: {step_distance*1e6:.2f} μm")
+            
+            # 执行分步传播
+            for step_idx in range(num_steps):
+                current_distance += step_distance
+                current_field = self._angular_spectrum_propagate(
+                    current_field, step_distance, wavelength
+                )
+                
+                # 保存传播后的场
+                if layer_idx < num_layers - 1:
+                    step_key = f'layer_{layer_idx+1}_step_{step_idx+1}'
+                    description = f'Layer {layer_idx+1} - Step {step_idx+1} ({current_distance*1e6:.1f} μm)'
+                    step_type = 'after_propagation'
+                else:
+                    if step_idx == num_steps - 1:
+                        step_key = 'final'
+                        description = f'Final Detection Plane ({current_distance*1e6:.1f} μm)'
+                        step_type = 'final'
+                    else:
+                        step_key = f'final_step_{step_idx+1}'
+                        description = f'Final Propagation Step {step_idx+1} ({current_distance*1e6:.1f} μm)'
+                        step_type = 'final_propagation'
+                
+                propagation_steps[step_key] = {
+                    'field': current_field.clone(),
+                    'description': description,
+                    'step_type': step_type,
+                    'layer_idx': layer_idx,
+                    'distance': current_distance,
+                    'distance_um': current_distance * 1e6
+                }
+                propagation_history.append((step_key, current_field.clone()))
+                print(f"✓ 步骤 {step_counter}: 传播至 {current_distance*1e6:.1f} μm")
+                step_counter += 1
+        
+        # 计算统计信息
+        statistics = self._calculate_propagation_statistics(propagation_history)
+        
+        # 可视化结果
+        if show_plots:
+            self._plot_propagation_steps(propagation_steps, mode_idx, wavelength_idx, wl_nm)
+        
+        # 保存中间结果
+        if save_intermediate:
+            saved_files = self._save_propagation_steps(
+                propagation_steps, mode_idx, wavelength_idx, wl_nm, save_dir
+            )
+            print(f"\n💾 保存了 {len(saved_files)} 个中间结果文件")
+        
+        # 返回完整结果
+        result = {
+            'steps': propagation_steps,
+            'history': propagation_history,
+            'statistics': statistics,
+            'mode_idx': mode_idx,
+            'wavelength_idx': wavelength_idx,
+            'wavelength_nm': wl_nm,
+            'total_distance_um': current_distance * 1e6
+        }
+        
+        print(f"\n✅ 单步传播显示完成！")
+        print(f"总步数: {len(propagation_history)}")
+        print(f"总传播距离: {current_distance * 1e6:.1f} μm")
+        print(f"能量守恒: {statistics.get('energy_conservation', 0):.4f}")
+        
+        return result
+
+    def _plot_propagation_steps(self, propagation_steps, mode_idx, wavelength_idx, wl_nm):
+        """绘制传播步骤的可视化图（距离以微米显示）"""
+        import matplotlib.pyplot as plt
+        
+        # 计算需要显示的步骤数
+        num_steps = len(propagation_steps)
+        
+        # 确定子图布局
+        if num_steps <= 3:
+            rows, cols = 1, num_steps
+            figsize = (5*cols, 4)
+        elif num_steps <= 6:
+            rows, cols = 2, 3
+            figsize = (15, 8)
+        elif num_steps <= 9:
+            rows, cols = 3, 3
+            figsize = (15, 12)
+        else:
+            rows, cols = 4, int(np.ceil(num_steps/4))
+            figsize = (4*cols, 4*rows)
+        
+        fig, axes = plt.subplots(rows, cols, figsize=figsize)
+        if num_steps == 1:
+            axes = [axes]
+        elif rows == 1:
+            axes = axes if isinstance(axes, (list, np.ndarray)) else [axes]
+        else:
+            axes = axes.flatten()
+        
+        # 绘制每个步骤
+        step_idx = 0
+        for step_key, step_data in propagation_steps.items():
+            if step_idx >= len(axes):
+                break
+                
+            ax = axes[step_idx]
+            field = step_data['field'].cpu().numpy()
+            intensity = np.abs(field)**2
+            
+            # 显示强度分布
+            im = ax.imshow(intensity, cmap='hot', origin='lower')
+            
+            # 获取距离信息
+            distance_um = step_data.get('distance_um', 0.0)
+            title = f"Step {step_idx+1}: {step_data['description']}"
+            if distance_um > 0:
+                title += f"\n({distance_um:.1f} μm)"
+            
+            ax.set_title(title, fontsize=10)
+            ax.set_xlabel('X (pixels)')
+            ax.set_ylabel('Y (pixels)')
+            
+            # 添加颜色条
+            plt.colorbar(im, ax=ax, shrink=0.8)
+            
+            # 添加统计信息
+            max_val = np.max(intensity)
+            energy = np.sum(intensity)
+            ax.text(0.02, 0.98, f'Max: {max_val:.3f}\nEnergy: {energy:.2e}', 
+                    transform=ax.transAxes, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                    fontsize=8)
+            
+            step_idx += 1
+        
+        # 隐藏多余的子图
+        for i in range(step_idx, len(axes)):
+            axes[i].set_visible(False)
+        
+        plt.suptitle(f'Step-by-Step Propagation - Mode {mode_idx}, λ={wl_nm}nm', 
+                    fontsize=14, y=0.98)
+        plt.tight_layout()
+        plt.show()
+
+    def _save_propagation_steps(self, propagation_steps, mode_idx, wavelength_idx, wl_nm, save_dir):
+        """保存传播步骤的数据（文件名包含微米距离信息）"""
+        import os
+        
+        # 创建保存目录
+        step_dir = os.path.join(save_dir, f'propagation_steps_mode{mode_idx}_wl{wl_nm}nm')
+        os.makedirs(step_dir, exist_ok=True)
+        
+        saved_files = []
+        
+        for step_key, step_data in propagation_steps.items():
+            # 获取距离信息
+            distance_um = step_data.get('distance_um', 0.0)
+            
+            # 保存场数据
+            field = step_data['field'].cpu().numpy()
+            filename = f'{step_key}_field_{distance_um:.1f}um.npy'
+            filepath = os.path.join(step_dir, filename)
+            np.save(filepath, field)
+            saved_files.append(filepath)
+            
+            # 保存强度图像
+            intensity = np.abs(field)**2
+            img_filename = f'{step_key}_intensity_{distance_um:.1f}um.png'
+            img_filepath = os.path.join(step_dir, img_filename)
+            
+            plt.figure(figsize=(6, 5))
+            plt.imshow(intensity, cmap='hot', origin='lower')
+            plt.colorbar()
+            plt.title(f"{step_data['description']}\nDistance: {distance_um:.1f} μm")
+            plt.xlabel('X (pixels)')
+            plt.ylabel('Y (pixels)')
+            plt.savefig(img_filepath, dpi=300, bbox_inches='tight')
+            plt.close()
+            saved_files.append(img_filepath)
+        
+        return saved_files
+
+    def _calculate_propagation_statistics(self, propagation_history):
+        """
+        计算传播过程的统计信息（包含微米单位的距离信息）
+        
+        参数:
+            propagation_history: 传播历史列表 [(step_name, field), ...]
+        
+        返回:
+            dict: 统计信息
+        """
+        if not propagation_history:
+            return {}
+        
+        # 获取初始和最终场
+        initial_field = propagation_history[0][1]
+        final_field = propagation_history[-1][1]
+        
+        # 转换为numpy数组
+        if isinstance(initial_field, torch.Tensor):
+            initial_np = initial_field.detach().cpu().numpy()
+        else:
+            initial_np = initial_field
+        
+        if isinstance(final_field, torch.Tensor):
+            final_np = final_field.detach().cpu().numpy()
+        else:
+            final_np = final_field
+        
+        # 计算能量
+        initial_energy = np.sum(np.abs(initial_np) ** 2)
+        final_energy = np.sum(np.abs(final_np) ** 2)
+        
+        # 能量守恒比例
+        energy_conservation = final_energy / initial_energy if initial_energy > 0 else 0
+        
+        # 计算最终聚焦比例
+        final_intensity = np.abs(final_np) ** 2
+        if final_intensity.ndim > 2:
+            final_intensity = final_intensity.squeeze()
+        
+        # 计算聚焦比例（中心区域能量占比）
+        center_y, center_x = final_intensity.shape[0] // 2, final_intensity.shape[1] // 2
+        radius = min(final_intensity.shape) // 8
+        
+        y_grid, x_grid = np.meshgrid(np.arange(final_intensity.shape[0]), 
+                                    np.arange(final_intensity.shape[1]), indexing='ij')
+        focus_mask = ((y_grid - center_y)**2 + (x_grid - center_x)**2) <= radius**2
+        
+        total_intensity = np.sum(final_intensity)
+        focus_intensity = np.sum(final_intensity[focus_mask])
+        focus_ratio = focus_intensity / total_intensity if total_intensity > 0 else 0
+        
+        # 计算每步的能量变化
+        energies = []
+        for step_name, field in propagation_history:
+            if isinstance(field, torch.Tensor):
+                field_np = field.detach().cpu().numpy()
+            else:
+                field_np = field
+            energy = np.sum(np.abs(field_np) ** 2)
+            energies.append(float(energy))
+        
+        statistics = {
+            'initial_energy': float(initial_energy),
+            'final_energy': float(final_energy),
+            'energy_conservation': float(energy_conservation),
+            'final_focus_ratio': float(focus_ratio),
+            'num_steps': len(propagation_history),
+            'energy_loss_db': float(-10 * np.log10(energy_conservation)) if energy_conservation > 0 else float('inf'),
+            'energies': energies,
+            'energy_variation': float(max(energies) / min(energies)) if min(energies) > 0 else 0,
+            'unit': 'micrometers'  # 标记使用的单位
+        }
+        
+        return statistics

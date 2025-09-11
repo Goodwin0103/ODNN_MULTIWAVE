@@ -1,0 +1,97 @@
+{
+  "analysis_type": "enhanced_wavelength_separation_v2",
+  "dual_dimension_integration": true,
+  "wavelength_analysis": {
+    "1310nm": {
+      "1_layers": {
+        "mean": 0.3691171421912926,
+        "std": 0.14566980033543142,
+        "max": 0.5577622472230759,
+        "min": 0.20310564802254016,
+        "values": [
+          0.3464835313282617,
+          0.5577622472230759,
+          0.20310564802254016
+        ]
+      },
+      "2_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      },
+      "3_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      },
+      "4_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      },
+      "5_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      }
+    },
+    "1550nm": {
+      "1_layers": {
+        "mean": 0.36341735633689926,
+        "std": 0.04649680629793661,
+        "max": 0.4243673422191374,
+        "min": 0.31157056165661967,
+        "values": [
+          0.35431416513494074,
+          0.31157056165661967,
+          0.4243673422191374
+        ]
+      },
+      "2_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      },
+      "3_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      },
+      "4_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      },
+      "5_layers": {
+        "mean": 0,
+        "std": 0,
+        "max": 0,
+        "min": 0,
+        "values": []
+      }
+    }
+  },
+  "available_methods": [
+    "analyze_wavelength_performance",
+    "create_wavelength_separated_visualization",
+    "print_wavelength_summary",
+    "create_detailed_performance_report",
+    "create_wavelength_analysis_workflow"
+  ],
+  "missing_methods": [],
+  "method_availability_rate": 1.0
+}

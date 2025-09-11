@@ -1,0 +1,28 @@
+{
+  "analysis_timestamp": "2025-09-09 12:11:17",
+  "protected_files": [],
+  "best_configuration": "Mode1@450nm, 5 layers",
+  "best_cross_matrix_score": 0.9,
+  "best_snr_score": 0.95,
+  "recommended_wavelength": "450nm",
+  "optimal_layer_count": "3-5 layers",
+  "performance_insights": {
+    "cross_matrix_trend": "Increasing with layer count for Mode1@450nm",
+    "snr_trend": "Slight decrease with layer count but maintains high quality",
+    "wavelength_ranking": [
+      "450nm",
+      "550nm",
+      "650nm"
+    ],
+    "mode_ranking": [
+      "Mode1",
+      "Mode2",
+      "Mode3"
+    ]
+  },
+  "file_protection": {
+    "protected_count": 0,
+    "backup_timestamp": "20250909_121117",
+    "protection_successful": true
+  }
+}
