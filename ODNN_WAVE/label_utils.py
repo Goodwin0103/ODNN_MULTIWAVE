@@ -87,14 +87,14 @@ def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize, offsets=
             dist_from_center = np.sqrt((X - center_x) ** 2 + (Y - center_y) ** 2)
             output_image[dist_from_center <= radius] = 1
     
-    # 🔧 添加调试输出
-    print("🔍 标签坐标映射调试:")
-    for mode_idx in range(grid_size):
-        for wl_idx in range(grid_size):
-            region_idx = mode_idx * grid_size + wl_idx
-            center_x = padding + wl_idx * cell_width + cell_width // 2
-            center_y = padding + mode_idx * cell_height + cell_height // 2
-            print(f"  MODE {mode_idx+1}, WL {wl_idx+1}: 中心位置 ({center_x}, {center_y}), 区域索引 {region_idx}")
+    # # 🔧 添加调试输出
+    # print("🔍 标签坐标映射调试:")
+    # for mode_idx in range(grid_size):
+    #     for wl_idx in range(grid_size):
+    #         region_idx = mode_idx * grid_size + wl_idx
+    #         center_x = padding + wl_idx * cell_width + cell_width // 2
+    #         center_y = padding + mode_idx * cell_height + cell_height // 2
+    #         print(f"  MODE {mode_idx+1}, WL {wl_idx+1}: 中心位置 ({center_x}, {center_y}), 区域索引 {region_idx}")
     
     return evaluation_regions
 
