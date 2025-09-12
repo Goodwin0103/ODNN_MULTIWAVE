@@ -1475,44 +1475,62 @@ class SeparatedDimensionVisualizer(Visualizer):
     # ==================== Cross Matrix 独立可视化 ====================
     
     def create_cross_matrix_visualization(self, cross_matrix_data, config, num_layer_options, 
-                                        save_path=None, title_suffix=""):
+                                                save_path=None, title_suffix=""):
         """
-        独立的Cross Matrix可视化
+        创建分离的Cross Matrix可视化 - 每个图表单独保存
         """
         if not cross_matrix_data:
             print("❌ 没有Cross Matrix数据")
             return None
         
-        print("🎨 创建Cross Matrix独立可视化...")
+        print("🎨 创建分离的Cross Matrix可视化...")
         
-        # 创建2x2布局
-        fig, axes = plt.subplots(2, 2, figsize=(20, 16))
-        fig.suptitle(f'Cross Matrix Analysis Dashboard{title_suffix}', 
-                    fontsize=18, fontweight='bold', y=0.95)
+        # 确定保存路径的基础目录
+        if save_path is None:
+            base_dir = config.save_dir
+            base_name = f'cross_matrix_analysis{title_suffix}'
+        else:
+            base_dir = os.path.dirname(save_path)
+            base_name = os.path.splitext(os.path.basename(save_path))[0]
         
-        # 1. Cross Matrix 性能柱状图 (左上)
-        self._create_cross_matrix_bar_chart(axes[0, 0], cross_matrix_data, config, num_layer_options)
+        saved_files = []
         
-        # 2. 聚焦集中度热图 (右上)
-        self._create_focus_concentration_heatmap(axes[0, 1], cross_matrix_data, config, num_layer_options)
+        # 1. 创建Cross Matrix性能柱状图
+        print("   📊 创建Cross Matrix性能柱状图...")
+        fig1, ax1 = plt.subplots(1, 1, figsize=(12, 8))
+        fig1.suptitle(f'Cross Matrix Performance Analysis{title_suffix}', 
+                    fontsize=16, fontweight='bold', y=0.95)
         
-        # 3. 按波长分组的Cross Matrix性能 (左下)
-        self._create_cross_matrix_wavelength_analysis(axes[1, 0], cross_matrix_data, config, num_layer_options)
-        
-        # 4. 最佳配置的Cross Matrix网格可视化 (右下)
-        self._create_best_cross_matrix_grid(axes[1, 1], cross_matrix_data, config)
+        self._create_cross_matrix_bar_chart(ax1, cross_matrix_data, config, num_layer_options)
         
         plt.tight_layout()
         plt.subplots_adjust(top=0.90)
         
-        if save_path is None:
-            save_path = os.path.join(config.save_dir, f'cross_matrix_analysis{title_suffix}.png')
-        
-        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+        bar_chart_path = os.path.join(base_dir, f'{base_name}_bar_chart.png')
+        plt.savefig(bar_chart_path, dpi=300, bbox_inches='tight', facecolor='white')
         plt.show()
+        saved_files.append(bar_chart_path)
+        print(f"   ✅ 柱状图已保存: {bar_chart_path}")
         
-        print(f"✅ Cross Matrix分析已保存: {save_path}")
-        return fig
+        # 2. 创建聚焦集中度热图
+        print("   🔥 创建聚焦集中度热图...")
+        fig2, ax2 = plt.subplots(1, 1, figsize=(12, 8))
+        fig2.suptitle(f'Focus Concentration Heatmap{title_suffix}', 
+                    fontsize=16, fontweight='bold', y=0.95)
+        
+        self._create_focus_concentration_heatmap(ax2, cross_matrix_data, config, num_layer_options)
+        
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.90)
+        
+        heatmap_path = os.path.join(base_dir, f'{base_name}_heatmap.png')
+        plt.savefig(heatmap_path, dpi=300, bbox_inches='tight', facecolor='white')
+        plt.show()
+        saved_files.append(heatmap_path)
+        print(f"   ✅ 热图已保存: {heatmap_path}")
+        
+        print(f"✅ Cross Matrix分离分析完成，共保存 {len(saved_files)} 个文件")
+        return saved_files
     
     def _create_cross_matrix_bar_chart(self, ax, cross_matrix_data, config, num_layer_options):
         """Cross Matrix性能柱状图"""
@@ -1588,7 +1606,7 @@ class SeparatedDimensionVisualizer(Visualizer):
                 value = fig_data[i, j]
                 color = 'white' if value < 0.5 else 'black'
                 ax.text(j, i, f'{value:.3f}', ha='center', va='center',
-                       color=color, fontweight='bold', fontsize=9)
+                    color=color, fontweight='bold', fontsize=9)
         
         ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
         ax.set_ylabel('Mode-Wavelength', fontsize=12, fontweight='bold')
@@ -1601,117 +1619,20 @@ class SeparatedDimensionVisualizer(Visualizer):
         # 添加颜色条
         cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.set_label('Focus Concentration', fontweight='bold')
-    
-    def _create_cross_matrix_wavelength_analysis(self, ax, cross_matrix_data, config, num_layer_options):
-        """按波长分析Cross Matrix性能"""
-        wavelengths = [int(wl * 1e9) for wl in config.wavelengths]
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
-        
-        # 准备数据
-        wl_data = {wl: [] for wl in wavelengths}
-        
-        for key, data in cross_matrix_data.items():
-            for wl in wavelengths:
-                if self._contains_wavelength(key, wl):
-                    if 'focus_concentration' in data:
-                        wl_data[wl].append(data['focus_concentration'])
-                    break
-        
-        # 计算统计数据
-        wl_means = []
-        wl_stds = []
-        wl_labels = []
-        bar_colors = []
-        
-        for i, wl in enumerate(wavelengths):
-            if wl_data[wl]:
-                wl_means.append(np.mean(wl_data[wl]))
-                wl_stds.append(np.std(wl_data[wl]))
-                wl_labels.append(f'{wl}nm\n({len(wl_data[wl])} configs)')
-                bar_colors.append(colors[i])
-            else:
-                wl_means.append(0)
-                wl_stds.append(0)
-                wl_labels.append(f'{wl}nm\n(0 configs)')
-                bar_colors.append('#cccccc')
-        
-        # 创建柱状图
-        bars = ax.bar(range(len(wavelengths)), wl_means,
-                    color=bar_colors, alpha=0.8, edgecolor='black', linewidth=1,
-                    yerr=wl_stds, capsize=5, error_kw={'linewidth': 2})
-        
-        # 添加数值标注
-        for i, (bar, mean_val, std_val) in enumerate(zip(bars, wl_means, wl_stds)):
-            if mean_val > 0:
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + std_val + 0.01,
-                    f'{mean_val:.3f}', ha='center', va='bottom',
-                    fontweight='bold', fontsize=11)
-        
-        # 标记最佳波长
-        if wl_means and max(wl_means) > 0:
-            best_idx = np.argmax(wl_means)
-            best_bar = bars[best_idx]
-            ax.text(best_bar.get_x() + best_bar.get_width()/2,
-                best_bar.get_height() + wl_stds[best_idx] + 0.03,
-                '★ BEST', ha='center', va='bottom',
-                fontsize=12, color='gold', fontweight='bold')
-        
-        ax.set_title('Cross Matrix Performance by Wavelength', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Wavelength', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Avg Focus Concentration ± Std', fontsize=12, fontweight='bold')
-        ax.set_xticks(range(len(wavelengths)))
-        ax.set_xticklabels(wl_labels)
-        ax.grid(True, alpha=0.3, axis='y')
-        ax.set_ylim(0, 1.0)
-    
-    def _create_best_cross_matrix_grid(self, ax, cross_matrix_data, config):
-        """显示最佳配置的Cross Matrix网格"""
-        # 找到最佳配置
-        best_key = None
-        best_concentration = 0
-        
-        for key, data in cross_matrix_data.items():
-            if 'focus_concentration' in data:
-                if data['focus_concentration'] > best_concentration:
-                    best_concentration = data['focus_concentration']
-                    best_key = key
-        
-        if best_key is None or 'cross_matrix' not in cross_matrix_data[best_key]:
-            ax.text(0.5, 0.5, 'No Cross Matrix Data Available', 
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
-            return
-        
-        # 获取最佳配置的cross matrix
-        best_matrix = cross_matrix_data[best_key]['cross_matrix']
-        grid_size = cross_matrix_data[best_key].get('grid_size', 8)
-        
-        # 绘制热图
-        im = ax.imshow(best_matrix, cmap='hot', aspect='auto')
-        
-        # 添加数值标注
-        for i in range(grid_size):
-            for j in range(grid_size):
-                value = best_matrix[i, j]
-                color = 'white' if value < np.max(best_matrix) * 0.5 else 'black'
-                ax.text(j, i, f'{value:.3f}', ha='center', va='center',
-                       color=color, fontweight='bold', fontsize=10)
-        
-        # 标记最强区域
-        max_pos = np.unravel_index(np.argmax(best_matrix), best_matrix.shape)
-        circle = Circle((max_pos[1], max_pos[0]), 0.3, fill=False, 
-                       color='cyan', linewidth=3)
-        ax.add_patch(circle)
-        
-        ax.set_title(f'Best Cross Matrix Grid\n{best_key}\nConcentration: {best_concentration:.3f}', 
-                    fontsize=12, fontweight='bold')
-        ax.set_xlabel('Grid X')
-        ax.set_ylabel('Grid Y')
-        
-        # 添加颜色条
-        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Convergence Intensity', fontweight='bold')
-    
-    # ==================== SNR 独立可视化 ====================
+
+    # 辅助方法
+    def _match_config(self, key, layers, mode_idx):
+        """匹配配置（层数和模式）"""
+        return (f'layers{layers}' in key or f'L{layers}_' in key) and \
+            (f'mode{mode_idx+1}' in key or f'_M{mode_idx+1}_' in key)
+
+    def _match_config_full(self, key, layers, mode_idx, wavelength):
+        """完全匹配配置（层数、模式、波长）"""
+        return self._match_config(key, layers, mode_idx) and \
+            f'{wavelength}nm' in key
+
+    print("✅ 聚焦集中度热图方法和辅助方法已定义")
+   # ==================== SNR 独立可视化 ====================
     
     def create_snr_only_visualization(self, snr_data, config, num_layer_options, 
                                     save_path=None, title_suffix=""):
