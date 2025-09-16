@@ -8,7 +8,6 @@ import re
 import matplotlib.patches as patches
 from matplotlib.patches import Rectangle, Circle
 import seaborn as sns
-from tomlkit import datetime
 
 class Visualizer:
     def __init__(self, config):
@@ -145,39 +144,65 @@ class Visualizer:
         
         return organized_data
 
-    # ==================== 新增：按波长分离的Cross Matrix方法 ====================
+    # ==================== 改进的按波长分离的Cross Matrix方法 ====================
     
-    def _extract_wavelengths(self, cross_matrix_data):
-        """从数据键中提取波长信息"""
+    def _extract_wavelengths_improved(self, cross_matrix_data):
+        """改进的波长提取方法 - 支持多种格式"""
         import re
         wavelengths = set()
         
         for key in cross_matrix_data.keys():
-            # 匹配波长模式，如 "532nm", "633nm", "780nm"
-            match = re.search(r'_(\d+)nm', key)
-            if match:
-                wavelengths.add(int(match.group(1)))
+            # 支持多种波长模式
+            patterns = [
+                r'(\d+)nm',      # 532nm
+                r'_(\d+)nm',     # _532nm  
+                r'nm(\d+)',      # nm532
+                r'wl(\d+)',      # wl532
+                r'(\d+)_nm'      # 532_nm
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, key, re.IGNORECASE)
+                if match:
+                    wavelengths.add(int(match.group(1)))
+                    break
         
         return sorted(list(wavelengths))
 
-    def _match_config_with_wavelength(self, key, layers, mode_idx, wavelength):
-        """匹配特定波长、层数和模式的配置"""
-        layer_match = f'L{layers}_' in key
-        mode_match = f'_M{mode_idx+1}_' in key  
-        wavelength_match = f'_{wavelength}nm' in key
+    def _match_config_with_wavelength_improved(self, key, layers, mode_idx, wavelength):
+        """改进的配置匹配方法 - 支持多种键名格式"""
+        # 层数匹配模式
+        layer_patterns = [f'L{layers}_', f'layers{layers}', f'{layers}layers', f'{layers}L']
+        
+        # 模式匹配模式 (支持1-based和0-based)
+        mode_patterns = [f'_M{mode_idx+1}_', f'_mode{mode_idx+1}', f'mode{mode_idx+1}', 
+                        f'M{mode_idx+1}', f'_M{mode_idx}_', f'mode{mode_idx}']
+        
+        # 波长匹配模式
+        wavelength_patterns = [f'_{wavelength}nm', f'{wavelength}nm', f'wl{wavelength}', f'nm{wavelength}']
+        
+        layer_match = any(pattern in key for pattern in layer_patterns)
+        mode_match = any(pattern in key for pattern in mode_patterns)
+        wavelength_match = any(pattern in key for pattern in wavelength_patterns)
         
         return layer_match and mode_match and wavelength_match
 
-    def _create_single_wavelength_chart(self, ax, cross_matrix_data, config, 
-                                      num_layer_options, wavelength):
-        """为单个波长创建Cross Matrix柱状图"""
+    def _create_single_wavelength_chart_improved(self, ax, cross_matrix_data, config, 
+                                               num_layer_options, wavelength):
+        """
+        为单个波长创建改进的Cross Matrix柱状图 - 匹配您的图片样式
+        """
         import numpy as np
         
         modes = [0, 1, 2]  # Mode 1, 2, 3 (0-based indexing)
-        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+        # 使用与您图片相同的颜色
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']  # 红色、青色、蓝色
+        mode_labels = ['Mode 1', 'Mode 2', 'Mode 3']
         
         x = np.arange(len(num_layer_options))
-        width = 0.25
+        width = 0.25  # 柱状图宽度
+        
+        max_value = 0  # 用于设置Y轴范围
         
         for mode_idx in modes:
             focus_concentrations = []
@@ -187,45 +212,73 @@ class Visualizer:
                 
                 # 只获取指定波长的数据
                 for key, data in cross_matrix_data.items():
-                    if self._match_config_with_wavelength(key, layers, mode_idx, wavelength):
+                    if self._match_config_with_wavelength_improved(key, layers, mode_idx, wavelength):
                         if 'focus_concentration' in data:
                             mode_layer_values.append(data['focus_concentration'])
                 
                 # 计算该模式和层数组合的平均值
                 avg_focus = np.mean(mode_layer_values) if mode_layer_values else 0
                 focus_concentrations.append(avg_focus)
+                max_value = max(max_value, avg_focus)
             
             # 绘制柱状图
             positions = x + mode_idx * width
             bars = ax.bar(positions, focus_concentrations, width, 
-                         label=f'Mode {mode_idx+1}', color=colors[mode_idx], alpha=0.8)
+                         label=mode_labels[mode_idx], color=colors[mode_idx], 
+                         alpha=0.8, edgecolor='black', linewidth=0.5)
             
-            # 添加数值标签
+            # 添加数值标签 - 匹配您图片的样式
             for bar, value in zip(bars, focus_concentrations):
                 if value > 0:
-                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                           f'{value:.3f}', ha='center', va='bottom', fontsize=9)
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max_value * 0.02,
+                           f'{value:.3f}', ha='center', va='bottom', 
+                           fontsize=10, fontweight='bold')
         
-        # 设置图表属性
-        ax.set_title(f'Cross Matrix Performance - {wavelength}nm', fontsize=12, fontweight='bold')
-        ax.set_xlabel('Number of Layers')
-        ax.set_ylabel('Focus Concentration')
+        # 设置图表属性 - 匹配您的图片样式
+        ax.set_title(f'Cross Matrix Performance - {wavelength}nm', 
+                    fontsize=14, fontweight='bold', pad=15)
+        ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Focus Concentration', fontsize=12, fontweight='bold')
         ax.set_xticks(x + width)
         ax.set_xticklabels(num_layer_options)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right', frameon=True, fancybox=True, shadow=True)
+        ax.grid(True, alpha=0.3, axis='y', linestyle='--')
         
-        # 设置合适的Y轴范围
-        max_value = max(focus_concentrations) if focus_concentrations else 1
-        ax.set_ylim(0, max_value * 1.15)
+        # 设置合适的Y轴范围 - 匹配您的图片
+        if max_value > 0:
+            ax.set_ylim(0, max_value * 1.2)
+        else:
+            ax.set_ylim(0, 1.0)
+        
+        # 设置坐标轴样式
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_linewidth(1.2)
+        ax.spines['bottom'].set_linewidth(1.2)
 
-    def _create_cross_matrix_charts_by_wavelength(self, cross_matrix_data, config, num_layer_options):
-        """为每个波长创建独立的Cross Matrix图表"""
-        import matplotlib.pyplot as plt
-        import numpy as np
+    def create_cross_matrix_by_wavelength_improved(self, cross_matrix_data, config, num_layer_options, 
+                                                 save_path=None, title_suffix=""):
+        """
+        创建改进的按波长分离的Cross Matrix可视化 - 匹配您的图片样式
+        
+        参数:
+        - cross_matrix_data: 包含focus_concentration数据的字典
+        - config: 配置对象，包含num_modes, wavelengths等
+        - num_layer_options: 层数选项列表，如[1,2,3,4,5]
+        - save_path: 保存路径（可选）
+        - title_suffix: 标题后缀（可选）
+        
+        返回:
+        - matplotlib figure对象
+        """
+        if not cross_matrix_data:
+            print("❌ 没有Cross Matrix数据")
+            return None
+        
+        print("🎨 创建改进的按波长分离Cross Matrix可视化...")
         
         # 1. 提取所有可用波长
-        wavelengths = self._extract_wavelengths(cross_matrix_data)
+        wavelengths = self._extract_wavelengths_improved(cross_matrix_data)
         
         if not wavelengths:
             print("警告：未找到波长信息")
@@ -233,24 +286,21 @@ class Visualizer:
         
         print(f"检测到波长: {wavelengths}nm")
         
-        # 2. 计算子图布局
+        # 2. 计算子图布局 - 水平排列
         n_wavelengths = len(wavelengths)
         if n_wavelengths == 1:
             rows, cols = 1, 1
-            figsize = (8, 6)
+            figsize = (10, 6)
         elif n_wavelengths == 2:
             rows, cols = 1, 2
-            figsize = (16, 6)
+            figsize = (20, 6)
         elif n_wavelengths == 3:
             rows, cols = 1, 3
-            figsize = (24, 6)
-        elif n_wavelengths == 4:
-            rows, cols = 2, 2
-            figsize = (16, 12)
+            figsize = (24, 8)  # 增加高度以匹配您的图片
         else:
             rows = (n_wavelengths + 2) // 3
             cols = 3
-            figsize = (24, 6 * rows)
+            figsize = (24, 8 * rows)
         
         # 3. 创建图表
         fig, axes = plt.subplots(rows, cols, figsize=figsize)
@@ -268,21 +318,47 @@ class Visualizer:
         # 4. 为每个波长生成图表
         for idx, wavelength in enumerate(wavelengths):
             ax = axes[idx]
-            self._create_single_wavelength_chart(ax, cross_matrix_data, config, 
-                                               num_layer_options, wavelength)
+            self._create_single_wavelength_chart_improved(ax, cross_matrix_data, config, 
+                                                        num_layer_options, wavelength)
         
         # 5. 隐藏多余的子图
         for idx in range(n_wavelengths, len(axes)):
             axes[idx].set_visible(False)
         
-        # 6. 添加总标题
-        fig.suptitle('Cross Matrix Performance Analysis by Wavelength', 
-                     fontsize=16, fontweight='bold', y=0.98)
-        
         plt.tight_layout()
-        plt.subplots_adjust(top=0.93)  # 为总标题留出空间
+        plt.subplots_adjust(top=0.88)  # 为总标题留出空间
         
-        return fig
+        # 7. 保存图片
+
+        if save_path is None:
+            save_path = os.path.join(config.save_dir if hasattr(config, 'save_dir') else '.', 
+                                   f'cross_matrix_by_wavelength{title_suffix}.png')
+            
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.show()
+            
+            print(f"✅ 按波长分离的Cross Matrix图表已保存: {save_path}")
+            return fig
+
+    # ==================== 保留原有的旧方法（向后兼容）====================
+    
+    def _extract_wavelengths(self, cross_matrix_data):
+        """从数据键中提取波长信息 - 旧版本，保持兼容性"""
+        return self._extract_wavelengths_improved(cross_matrix_data)
+
+    def _match_config_with_wavelength(self, key, layers, mode_idx, wavelength):
+        """匹配特定波长、层数和模式的配置 - 旧版本，保持兼容性"""
+        return self._match_config_with_wavelength_improved(key, layers, mode_idx, wavelength)
+
+    def _create_single_wavelength_chart(self, ax, cross_matrix_data, config, 
+                                      num_layer_options, wavelength):
+        """为单个波长创建Cross Matrix柱状图 - 旧版本，保持兼容性"""
+        return self._create_single_wavelength_chart_improved(ax, cross_matrix_data, config, 
+                                                           num_layer_options, wavelength)
+
+    def _create_cross_matrix_charts_by_wavelength(self, cross_matrix_data, config, num_layer_options):
+        """为每个波长创建独立的Cross Matrix图表 - 旧版本，保持兼容性"""
+        return self.create_cross_matrix_by_wavelength_improved(cross_matrix_data, config, num_layer_options)
 
     # ==================== 双维度可见度计算方法 ====================
     
@@ -485,6 +561,7 @@ class Visualizer:
                 'comprehensive_visibility': comprehensive_visibility
             }
         }
+
 
 class SeparatedDimensionVisualizer(Visualizer):
     """分离的双维度可视化器"""

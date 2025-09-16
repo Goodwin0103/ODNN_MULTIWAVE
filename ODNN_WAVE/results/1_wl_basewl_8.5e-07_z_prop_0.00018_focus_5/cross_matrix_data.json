@@ -1,0 +1,152 @@
+{
+  "L2_M3_850nm": {
+    "focus_concentration": 0.8623536033715733,
+    "max_intensity": 37.342506408691406,
+    "total_intensity": 43.303009650108606,
+    "focus_region": [
+      5,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L5_M1_850nm": {
+    "focus_concentration": 0.8852031414314482,
+    "max_intensity": 36.66252899169922,
+    "total_intensity": 41.41707962346845,
+    "focus_region": [
+      2,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L3_M3_850nm": {
+    "focus_concentration": 0.8415076996173174,
+    "max_intensity": 39.41785430908203,
+    "total_intensity": 46.84194134756399,
+    "focus_region": [
+      5,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L3_M1_850nm": {
+    "focus_concentration": 0.8992319553040734,
+    "max_intensity": 35.5046501159668,
+    "total_intensity": 39.48330562148567,
+    "focus_region": [
+      2,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L4_M1_850nm": {
+    "focus_concentration": 0.9094892071339965,
+    "max_intensity": 37.50898742675781,
+    "total_intensity": 41.24181698083703,
+    "focus_region": [
+      2,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L5_M2_850nm": {
+    "focus_concentration": 0.6184105618496889,
+    "max_intensity": 41.63161087036133,
+    "total_intensity": 67.32034256623592,
+    "focus_region": [
+      4,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L2_M2_850nm": {
+    "focus_concentration": 0.6950537790925535,
+    "max_intensity": 38.65208435058594,
+    "total_intensity": 55.61020673965649,
+    "focus_region": [
+      4,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L1_M1_850nm": {
+    "focus_concentration": 0.14004336113481433,
+    "max_intensity": 175.9644775390625,
+    "total_intensity": 1256.4999591066248,
+    "focus_region": [
+      3,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L4_M3_850nm": {
+    "focus_concentration": 0.840217315429545,
+    "max_intensity": 37.654518127441406,
+    "total_intensity": 44.815213202440646,
+    "focus_region": [
+      5,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L3_M2_850nm": {
+    "focus_concentration": 0.7759960850890674,
+    "max_intensity": 34.721099853515625,
+    "total_intensity": 44.743911110650515,
+    "focus_region": [
+      4,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L1_M3_850nm": {
+    "focus_concentration": 0.12571012887605307,
+    "max_intensity": 273.8000183105469,
+    "total_intensity": 2178.026709212064,
+    "focus_region": [
+      4,
+      4
+    ],
+    "grid_size": 8
+  },
+  "L5_M3_850nm": {
+    "focus_concentration": 0.8538032225827092,
+    "max_intensity": 35.789302825927734,
+    "total_intensity": 41.91750731226057,
+    "focus_region": [
+      5,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L1_M2_850nm": {
+    "focus_concentration": 0.33689392931811724,
+    "max_intensity": 100.90644836425781,
+    "total_intensity": 299.5199366413684,
+    "focus_region": [
+      4,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L4_M2_850nm": {
+    "focus_concentration": 0.7620970995602445,
+    "max_intensity": 31.92626953125,
+    "total_intensity": 41.89265324536245,
+    "focus_region": [
+      4,
+      2
+    ],
+    "grid_size": 8
+  },
+  "L2_M1_850nm": {
+    "focus_concentration": 0.4976148479461549,
+    "max_intensity": 51.39698028564453,
+    "total_intensity": 103.28666939447163,
+    "focus_region": [
+      2,
+      2
+    ],
+    "grid_size": 8
+  }
+}

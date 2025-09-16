@@ -1,6 +1,6 @@
 {
   "analysis_type": "separated_cross_matrix_snr_enhanced",
-  "timestamp": "2025-09-16T10:45:36",
+  "timestamp": "2025-09-16T11:50:43",
   "total_configurations": 30,
   "enhanced_wavelength_analysis": true,
   "cross_matrix_analysis": {

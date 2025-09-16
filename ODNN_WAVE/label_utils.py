@@ -189,7 +189,7 @@ def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_col
             # 🔧 在每个子图上添加模式和波长信息
             axes[mode_idx, wl_idx].text(0.02, 0.98, f'Mode {mode_idx+1}', 
                                       transform=axes[mode_idx, wl_idx].transAxes,
-                                      fontsize=12, fontweight='bold',
+                                      fontsize=16, fontweight='bold',
                                       color='white', ha='left', va='top',
                                       bbox=dict(boxstyle="round,pad=0.3", 
                                               facecolor='black', alpha=0.7))
