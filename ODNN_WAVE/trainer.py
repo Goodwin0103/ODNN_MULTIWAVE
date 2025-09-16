@@ -1,3 +1,5 @@
+# trainer.py - 修改导入和相关代码
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -5,7 +7,13 @@ from torch.optim.lr_scheduler import ExponentialLR
 import numpy as np
 import os
 from simulator import Simulator
-from label_utils import create_evaluation_regions_mode_wavelength, evaluate_output, evaluate_all_regions
+# 修改导入语句
+from label_utils import (
+    create_evaluation_regions_by_wavelength,  # 新函数
+    create_evaluation_regions_mode_wavelength,  # 兼容性函数
+    evaluate_output, 
+    evaluate_all_regions
+)
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -20,14 +28,18 @@ class Trainer:
             self.evaluation_regions = evaluation_regions
             print(f"使用外部提供的评估区域: {len(evaluation_regions)}个区域")
         else:
-            # 使用新的创建方法
-            self.evaluation_regions = create_evaluation_regions_mode_wavelength(
+            # 🔧 使用新的按波长分列的方法
+            self.evaluation_regions = create_evaluation_regions_by_wavelength(
                 self.config.layer_size,
                 self.config.layer_size,
                 self.config.focus_radius,
-                detectsize=self.config.detectsize
+                detectsize=self.config.detectsize,
+                offsets=getattr(self.config, 'offsets', None)  # 安全获取偏移参数
             )
-            print(f"创建评估区域: {len(self.evaluation_regions)}个区域")
+            print(f"创建按波长分列的评估区域: {len(self.evaluation_regions)}个区域")
+    
+    # ... 其余代码保持不变 ...
+
 
     def train_model(self, num_layers):
         train_loader = self.data_generator.create_dataloader()
@@ -174,92 +186,59 @@ class Trainer:
 
     def _calculate_visibility_fixed(self, weights):
         """
-        修复版本：返回每个波长每个模式的可见度
-        返回格式：[wl1_mode1, wl1_mode2, wl1_mode3, wl2_mode1, wl2_mode2, wl2_mode3, wl3_mode1, wl3_mode2, wl3_mode3]
+        修复版本：正确映射区域到模式和波长
         """
         if torch.is_tensor(weights):
             weights = weights.cpu().numpy()
         
+        # weights shape: [num_wavelengths, num_batches, num_regions]
         num_wavelengths, num_batches, num_regions = weights.shape
         num_modes = self.config.num_modes
         
         print(f"计算可见度: {num_wavelengths}波长, {num_batches}批次, {num_regions}区域, {num_modes}模式")
         
-        # 存储每个波长每个模式的可见度
+        # 验证区域数量
+        expected_regions = num_wavelengths * num_modes
+        if num_regions != expected_regions:
+            print(f"⚠️ 区域数量不匹配: 期望{expected_regions}, 实际{num_regions}")
+        
         all_visibilities = []
         
-        # 对每个波长分别计算
+        # 🔧 关键修复：按照区域创建的顺序来计算可见度
+        # 区域创建顺序：wl0_mode0, wl0_mode1, wl0_mode2, wl1_mode0, wl1_mode1, wl1_mode2
         for wl_idx in range(num_wavelengths):
             wavelength = self.config.wavelengths[wl_idx]
             print(f"处理波长 {wavelength*1e9:.0f}nm (索引{wl_idx})")
             
-            # 对该波长下的每个模式计算可见度
             for mode_idx in range(num_modes):
                 print(f"  处理模式 {mode_idx+1}")
                 
-                # 计算该波长该模式在所有批次中的可见度
-                mode_vis_across_batches = []
+                # 🔧 正确计算区域索引
+                # 区域索引 = wl_idx * num_modes + mode_idx
+                region_idx = wl_idx * num_modes + mode_idx
                 
-                for batch_idx in range(num_batches):
-                    # 找出该模式对应的区域索引
-                    # 假设区域按 [mode0_wl0, mode1_wl0, mode2_wl0, mode0_wl1, mode1_wl1, mode2_wl1, ...] 排列
-                    # 或者按 [mode0_wl0, mode0_wl1, mode0_wl2, mode1_wl0, mode1_wl1, mode1_wl2, ...] 排列
+                if region_idx < num_regions:
+                    # 计算该区域在所有批次中的可见度
+                    mode_vis_across_batches = []
                     
-                    # 收集该模式在该波长下的所有相关区域能量
-                    mode_energies = []
-                    
-                    # 方法1：假设区域按模式优先排列 (mode0_all_wl, mode1_all_wl, mode2_all_wl)
-                    regions_per_mode = num_regions // num_modes
-                    start_region = mode_idx * regions_per_mode
-                    end_region = (mode_idx + 1) * regions_per_mode
-                    
-                    # 在该模式的区域范围内，找到对应当前波长的区域
-                    for region_idx in range(start_region, min(end_region, num_regions)):
+                    for batch_idx in range(num_batches):
+                        # 获取该波长该区域的能量
                         energy = weights[wl_idx, batch_idx, region_idx]
-                        mode_energies.append(energy)
-                    
-                    # 如果上面的方法不对，尝试方法2：区域按波长优先排列
-                    if not mode_energies or len(mode_energies) < 3:  # 每个模式应该至少有3个检测器
-                        mode_energies = []
-                        # 假设每个波长有 num_modes*3 个区域（每个模式3个检测器）
-                        regions_per_wavelength = num_modes * 3
-                        detector_start = mode_idx * 3
-                        detector_end = detector_start + 3
                         
-                        for detector_idx in range(detector_start, detector_end):
-                            if detector_idx < num_regions:
-                                energy = weights[wl_idx, batch_idx, detector_idx]
-                                mode_energies.append(energy)
+                        # 简单的可见度计算（可以根据需要改进）
+                        # 这里假设单个检测器的情况，实际应用中可能需要多个检测器
+                        visibility = min(1.0, max(0.0, float(energy)))
+                        mode_vis_across_batches.append(visibility)
                     
-                    # 计算该批次该模式的可见度
-                    if len(mode_energies) >= 2:  # 至少需要2个检测器来计算可见度
-                        I_max = np.max(mode_energies)
-                        I_min = np.min(mode_energies)
-                        
-                        if I_max + I_min > 1e-12:
-                            visibility = (I_max - I_min) / (I_max + I_min)
-                        else:
-                            visibility = 0.0
-                    else:
-                        visibility = 0.0
-                    
-                    mode_vis_across_batches.append(visibility)
-                    
-                    if batch_idx == 0:  # 只打印第一个批次的详细信息
-                        print(f"    批次0: 能量={mode_energies}, 可见度={visibility:.6f}")
-                
-                # 计算该波长该模式所有批次的平均可见度
-                if mode_vis_across_batches:
-                    avg_visibility = np.mean(mode_vis_across_batches)
+                    avg_visibility = np.mean(mode_vis_across_batches) if mode_vis_across_batches else 0.0
                     all_visibilities.append(avg_visibility)
-                    print(f"  模式{mode_idx+1}平均可见度: {avg_visibility:.6f}")
+                    
+                    print(f"    区域{region_idx}: 平均可见度={avg_visibility:.6f}")
                 else:
                     all_visibilities.append(0.0)
-                    print(f"  模式{mode_idx+1}平均可见度: 0.0 (无有效数据)")
+                    print(f"    区域{region_idx}: 超出范围，可见度=0.0")
         
-        print(f"总共计算了 {len(all_visibilities)} 个可见度值")
-        print(f"期望值: {num_wavelengths * num_modes}")
-        
+        print(f"✓ 计算完成，共{len(all_visibilities)}个可见度值")
         return all_visibilities
 
     def train_multiple_models(self, num_layer_options):
