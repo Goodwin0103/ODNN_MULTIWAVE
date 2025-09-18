@@ -1,0 +1,15 @@
+{
+  "padding_ratio": 0.01,
+  "use_apodization": true,
+  "apodization_width": 15,
+  "fallback_focal_lengths": [
+    40.0,
+    60.0,
+    80.0,
+    100.0,
+    120.0
+  ],
+  "default_num_layers": 3,
+  "model_type": "Zero Padding Enhanced",
+  "training_time": 51.613224267959595
+}

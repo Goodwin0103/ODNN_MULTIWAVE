@@ -1,0 +1,137 @@
+{
+  "L5_M3_1550nm": {
+    "snr_db": 20.868616104125977,
+    "peak_snr_db": 22.600038528442383,
+    "signal_power": 0.1047593206167221,
+    "noise_power": 0.0008576912805438042,
+    "contrast_ratio": 122.14105987548828,
+    "signal_region_size": 84,
+    "background_region_size": 26766
+  },
+  "L1_M3_1550nm": {
+    "snr_db": 22.052448272705078,
+    "peak_snr_db": 23.522232055664062,
+    "signal_power": 0.08489789813756943,
+    "noise_power": 0.0005292394780553877,
+    "contrast_ratio": 160.41490173339844,
+    "signal_region_size": 68,
+    "background_region_size": 23606
+  },
+  "L5_M1_1550nm": {
+    "snr_db": 23.673906326293945,
+    "peak_snr_db": 25.38277816772461,
+    "signal_power": 0.13439883291721344,
+    "noise_power": 0.0005767730181105435,
+    "contrast_ratio": 233.01858520507812,
+    "signal_region_size": 49,
+    "background_region_size": 24999
+  },
+  "L4_M3_1550nm": {
+    "snr_db": 26.46815299987793,
+    "peak_snr_db": 27.78368377685547,
+    "signal_power": 0.30063197016716003,
+    "noise_power": 0.0006779847899451852,
+    "contrast_ratio": 443.419921875,
+    "signal_region_size": 61,
+    "background_region_size": 24575
+  },
+  "L1_M2_1550nm": {
+    "snr_db": 26.777324676513672,
+    "peak_snr_db": 28.19097328186035,
+    "signal_power": 0.17680323123931885,
+    "noise_power": 0.00037132808938622475,
+    "contrast_ratio": 476.13751220703125,
+    "signal_region_size": 46,
+    "background_region_size": 14615
+  },
+  "L4_M1_1550nm": {
+    "snr_db": 24.67623519897461,
+    "peak_snr_db": 26.052204132080078,
+    "signal_power": 0.1552392691373825,
+    "noise_power": 0.0005289054242894053,
+    "contrast_ratio": 293.51043701171875,
+    "signal_region_size": 62,
+    "background_region_size": 26410
+  },
+  "L5_M2_1550nm": {
+    "snr_db": 27.594717025756836,
+    "peak_snr_db": 29.103824615478516,
+    "signal_power": 0.4007647931575775,
+    "noise_power": 0.0006972973351366818,
+    "contrast_ratio": 574.7401733398438,
+    "signal_region_size": 40,
+    "background_region_size": 15627
+  },
+  "L3_M2_1550nm": {
+    "snr_db": 24.931175231933594,
+    "peak_snr_db": 26.396717071533203,
+    "signal_power": 0.20299047231674194,
+    "noise_power": 0.0006521658506244421,
+    "contrast_ratio": 311.25592041015625,
+    "signal_region_size": 45,
+    "background_region_size": 13874
+  },
+  "L3_M3_1550nm": {
+    "snr_db": 27.942113876342773,
+    "peak_snr_db": 29.416780471801758,
+    "signal_power": 0.3673880100250244,
+    "noise_power": 0.0005900836549699306,
+    "contrast_ratio": 622.603271484375,
+    "signal_region_size": 49,
+    "background_region_size": 24798
+  },
+  "L3_M1_1550nm": {
+    "snr_db": 17.905977249145508,
+    "peak_snr_db": 19.90532875061035,
+    "signal_power": 0.030904555693268776,
+    "noise_power": 0.0005005240091122687,
+    "contrast_ratio": 61.74440383911133,
+    "signal_region_size": 46,
+    "background_region_size": 22437
+  },
+  "L2_M3_1550nm": {
+    "snr_db": 27.731861114501953,
+    "peak_snr_db": 29.110965728759766,
+    "signal_power": 0.3007809519767761,
+    "noise_power": 0.000507065502461046,
+    "contrast_ratio": 593.1796875,
+    "signal_region_size": 36,
+    "background_region_size": 24303
+  },
+  "L1_M1_1550nm": {
+    "snr_db": 19.63829231262207,
+    "peak_snr_db": 21.27783203125,
+    "signal_power": 0.037632666528224945,
+    "noise_power": 0.000409011758165434,
+    "contrast_ratio": 92.0087661743164,
+    "signal_region_size": 100,
+    "background_region_size": 14526
+  },
+  "L2_M2_1550nm": {
+    "snr_db": 29.372879028320312,
+    "peak_snr_db": 30.614931106567383,
+    "signal_power": 0.34297090768814087,
+    "noise_power": 0.00039625013596378267,
+    "contrast_ratio": 865.5414428710938,
+    "signal_region_size": 42,
+    "background_region_size": 15111
+  },
+  "L4_M2_1550nm": {
+    "snr_db": 27.853981018066406,
+    "peak_snr_db": 29.297027587890625,
+    "signal_power": 0.3835504949092865,
+    "noise_power": 0.0006286726566031575,
+    "contrast_ratio": 610.095703125,
+    "signal_region_size": 35,
+    "background_region_size": 16159
+  },
+  "L2_M1_1550nm": {
+    "snr_db": 23.07035255432129,
+    "peak_snr_db": 24.892709732055664,
+    "signal_power": 0.0740525871515274,
+    "noise_power": 0.00036517842090688646,
+    "contrast_ratio": 202.78466796875,
+    "signal_region_size": 30,
+    "background_region_size": 14938
+  }
+}
