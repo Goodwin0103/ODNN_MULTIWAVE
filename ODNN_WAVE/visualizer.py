@@ -90,61 +90,49 @@ class Visualizer:
         
         return result
 
-    def _reorganize_visibility_by_mode(self, visibility_data, config, num_layer_options):
-        """重新按模式组织 visibility 数据"""
+    def _match_config_unified(self, key, layers, mode_idx, wavelength=None):
+        """统一的配置匹配函数 - 解决两个图表数据不一致问题"""
+        # 层数匹配模式 - 支持多种格式
+        layer_patterns = [
+            f'L{layers}_',       # L4_
+            f'layers{layers}',   # layers4
+            f'{layers}layers',   # 4layers
+            f'{layers}L'         # 4L
+        ]
+        layer_match = any(pattern in key for pattern in layer_patterns)
         
-        organized_data = []
+        # 模式匹配模式 - 统一使用1-based索引
+        mode_patterns = [
+            f'_M{mode_idx+1}_',    # _M1_
+            f'_mode{mode_idx+1}',  # _mode1
+            f'mode{mode_idx+1}',   # mode1
+            f'M{mode_idx+1}'       # M1
+        ]
+        mode_match = any(pattern in key for pattern in mode_patterns)
         
-        print(f"\n🔄 重新组织数据:")
-        print(f"  配置: {config.num_modes} 个模式, {len(num_layer_options)} 个层数选项")
-        print(f"  可见性数据键值数量: {len(visibility_data)}")
-        
-        # 显示所有可用的键值
-        print(f"  可用键值 (layers, mode, wavelength):")
-        for key in sorted(visibility_data.keys()):
-            print(f"    {key}: {visibility_data[key]:.4f}")
-        
-        missing_keys = []
-        found_keys = []
-        
-        for mode_idx in range(config.num_modes):  # 0, 1, 2
-            mode_data = []
-            print(f"\n  处理模式 {mode_idx} (0-based):")
-            
-            for layers in num_layer_options:
-                wavelength_data = []
-                
-                for wl in config.wavelengths:
-                    wl_nm = int(wl * 1e9)
-                    key = (layers, mode_idx, wl_nm)  # 使用0-based模式索引
-                    
-                    if key in visibility_data:
-                        visibility = visibility_data[key]
-                        found_keys.append(key)
-                        print(f"    ✅ {key}: {visibility:.4f}")
-                    else:
-                        visibility = 0.0
-                        missing_keys.append(key)
-                        print(f"    ❌ {key}: 缺失")
-                    
-                    wavelength_data.append(visibility)
-                
-                mode_data.append(wavelength_data)
-            
-            organized_data.append(mode_data)
-        
-        print(f"\n📈 数据统计:")
-        print(f"  找到的键值: {len(found_keys)}")
-        print(f"  缺失的键值: {len(missing_keys)}")
-        
-        if missing_keys:
-            print(f"  前10个缺失键值:")
-            for key in missing_keys[:10]:
-                print(f"    {key}")
-        
-        return organized_data
+        # 波长匹配（如果指定）
+        if wavelength is not None:
+            wavelength_patterns = [
+                f'_{wavelength}nm',  # _850nm
+                f'{wavelength}nm'    # 850nm
+            ]
+            wavelength_match = any(pattern in key for pattern in wavelength_patterns)
+            return layer_match and mode_match and wavelength_match
+        else:
+            return layer_match and mode_match
 
-    # ==================== 改进的按波长分离的Cross Matrix方法 ====================
+    def _extract_matching_values(self, cross_matrix_data, layers, mode_idx, wavelength=None):
+        """提取匹配的数值 - 统一的数据聚合方法"""
+        matching_values = []
+        
+        for key, data in cross_matrix_data.items():
+            if self._match_config_unified(key, layers, mode_idx, wavelength):
+                if 'focus_concentration' in data:
+                    matching_values.append(data['focus_concentration'])
+        
+        # 统一使用平均值
+        return np.mean(matching_values) if matching_values else 0
+
     
     def _extract_wavelengths_improved(self, cross_matrix_data):
         """改进的波长提取方法 - 支持多种格式"""
@@ -188,9 +176,9 @@ class Visualizer:
         return layer_match and mode_match and wavelength_match
 
     def _create_single_wavelength_chart_improved(self, ax, cross_matrix_data, config, 
-                                               num_layer_options, wavelength):
+                                            num_layer_options, wavelength):
         """
-        为单个波长创建改进的Cross Matrix柱状图 - 匹配您的图片样式
+        修复后的单波长柱状图 - 与热图数据一致
         """
         import numpy as np
         
@@ -208,31 +196,24 @@ class Visualizer:
             focus_concentrations = []
             
             for layers in num_layer_options:
-                mode_layer_values = []
-                
-                # 只获取指定波长的数据
-                for key, data in cross_matrix_data.items():
-                    if self._match_config_with_wavelength_improved(key, layers, mode_idx, wavelength):
-                        if 'focus_concentration' in data:
-                            mode_layer_values.append(data['focus_concentration'])
-                
-                # 计算该模式和层数组合的平均值
-                avg_focus = np.mean(mode_layer_values) if mode_layer_values else 0
+                # 🔧 使用统一的数据提取方法
+                avg_focus = self._extract_matching_values(
+                    cross_matrix_data, layers, mode_idx, wavelength)
                 focus_concentrations.append(avg_focus)
                 max_value = max(max_value, avg_focus)
             
             # 绘制柱状图
             positions = x + mode_idx * width
             bars = ax.bar(positions, focus_concentrations, width, 
-                         label=mode_labels[mode_idx], color=colors[mode_idx], 
-                         alpha=0.8, edgecolor='black', linewidth=0.5)
+                        label=mode_labels[mode_idx], color=colors[mode_idx], 
+                        alpha=0.8, edgecolor='black', linewidth=0.5)
             
             # 添加数值标签 - 匹配您图片的样式
             for bar, value in zip(bars, focus_concentrations):
                 if value > 0:
                     ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max_value * 0.02,
-                           f'{value:.3f}', ha='center', va='bottom', 
-                           fontsize=10, fontweight='bold')
+                        f'{value:.3f}', ha='center', va='bottom', 
+                        fontsize=10, fontweight='bold')
         
         # 设置图表属性 - 匹配您的图片样式
         ax.set_title(f'Cross Matrix Performance - {wavelength}nm', 
@@ -666,12 +647,10 @@ class SeparatedDimensionVisualizer(Visualizer):
         ax.set_ylim(0, 1.0)
     
     def _create_focus_concentration_heatmap(self, ax, cross_matrix_data, config, num_layer_options):
-        """聚焦集中度热图"""
-        # 构建热图数据矩阵
         wavelengths = [int(wl * 1e9) for wl in config.wavelengths]
-        
-        # 为每个模式创建子热图
         num_modes = config.num_modes
+        
+        # 构建热图数据矩阵
         fig_data = np.zeros((num_modes * len(wavelengths), len(num_layer_options)))
         
         row_labels = []
@@ -681,12 +660,10 @@ class SeparatedDimensionVisualizer(Visualizer):
                 row_labels.append(f'M{mode_idx+1}-{wl}nm')
                 
                 for col_idx, layers in enumerate(num_layer_options):
-                    # 查找匹配的数据
-                    for key, data in cross_matrix_data.items():
-                        if self._match_config_full(key, layers, mode_idx, wl):
-                            if 'focus_concentration' in data:
-                                fig_data[row_idx, col_idx] = data['focus_concentration']
-                            break
+                    # 🔧 使用统一的数据提取方法
+                    avg_focus = self._extract_matching_values(
+                        cross_matrix_data, layers, mode_idx, wl)
+                    fig_data[row_idx, col_idx] = avg_focus
         
         # 绘制热图
         im = ax.imshow(fig_data, cmap='RdYlBu_r', aspect='auto', vmin=0, vmax=1)
@@ -701,7 +678,7 @@ class SeparatedDimensionVisualizer(Visualizer):
         
         ax.set_xlabel('Number of Layers', fontsize=12, fontweight='bold')
         ax.set_ylabel('Mode-Wavelength', fontsize=12, fontweight='bold')
-        ax.set_title('Focus Concentration Heatmap', fontsize=14, fontweight='bold')
+        ax.set_title('Focus Concentration Heatmap_separated', fontsize=14, fontweight='bold')
         ax.set_xticks(range(len(num_layer_options)))
         ax.set_xticklabels([f'{layers}L' for layers in num_layer_options])
         ax.set_yticks(range(len(row_labels)))

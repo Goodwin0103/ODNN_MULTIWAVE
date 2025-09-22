@@ -71,7 +71,6 @@ def create_evaluation_regions_by_wavelength(H, W, radius, detectsize, offsets=No
     
     # 🔧 单波长特殊处理
     if num_wavelengths == 1:
-        print("检测到单波长配置，使用垂直居中布局")
         return create_single_wavelength_centered_regions(H, W, radius, detectsize, num_modes)
     
     # 多波长情况保持原有逻辑

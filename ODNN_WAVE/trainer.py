@@ -33,8 +33,8 @@ class Trainer:
                 self.config.layer_size,
                 self.config.layer_size,
                 self.config.focus_radius,
-                detectsize=self.config.detectsize,
-                offsets=getattr(self.config, 'offsets', None),  # 安全获取偏移参数
+                detectsize=getattr(self.config, 'detectsize', 20),  # 🔧 安全获取detectsize
+                 offsets=getattr(self.config, 'offsets', [(0,0) for _ in range(len(self.config.wavelengths))]),
                 num_modes=self.config.num_modes  # 🔧 添加模式数量参数
             )
             print(f"创建按波长分列的评估区域: {len(self.evaluation_regions)}个区域")
@@ -162,37 +162,54 @@ class Trainer:
                 for c in range(min(C, len(self.config.wavelengths))):
                     chan = predictions[:, c]
                     energies = []
+                    
                     # 🔧 修复：根据波长数量调整区域使用方式
                     if len(self.config.wavelengths) == 1:
-                        # 单波长：直接使用所有区域
-                        for region_idx, region in enumerate(self.evaluation_regions):
+                        # 单波长：直接使用所有区域（按模式顺序）
+                        print(f"单波长评估: 使用前{self.config.num_modes}个区域")
+                        for mode_idx in range(min(self.config.num_modes, len(self.evaluation_regions))):
+                            region = self.evaluation_regions[mode_idx]
                             xs, xe, ys, ye = region
                             region_sum = chan[:, ys:ye, xs:xe].sum(dim=(-2, -1))
                             energies.append(region_sum)
+                            
                     else:
                         # 多波长：按波长分组使用区域
                         start_idx = c * self.config.num_modes
                         end_idx = start_idx + self.config.num_modes
+                        print(f"多波长评估: 波长{c+1}使用区域{start_idx}-{end_idx-1}")
+                        
                         for region_idx in range(start_idx, min(end_idx, len(self.evaluation_regions))):
                             region = self.evaluation_regions[region_idx]
                             xs, xe, ys, ye = region
                             region_sum = chan[:, ys:ye, xs:xe].sum(dim=(-2, -1))
                             energies.append(region_sum)
                     
-                    energies = torch.stack(energies, dim=1)
-                    weights_batch.append(energies)
+                    if energies:  # 🔧 确保energies不为空
+                        energies = torch.stack(energies, dim=1)
+                        weights_batch.append(energies)
+                    else:
+                        print(f"警告: 波长{c+1}没有找到有效的评估区域")
+                        # 创建零张量作为占位符
+                        zero_energies = torch.zeros(B, self.config.num_modes, device=chan.device)
+                        weights_batch.append(zero_energies)
                 
                 # 重新排列维度: [波长, 批次, 评估区域]
-                weights_batch = torch.stack(weights_batch, dim=0)
-                all_weights_pred.append(weights_batch.cpu())
+                if weights_batch:
+                    weights_batch = torch.stack(weights_batch, dim=0)
+                    all_weights_pred.append(weights_batch.cpu())
         
         # 合并批次维度
-        weights_pred = torch.cat(all_weights_pred, dim=1).numpy()
-        
-        # 计算可见度 - 修复为每个波长每个模式的可见度
-        visibility = self._calculate_visibility_fixed(weights_pred)
-        
-        return {'weights_pred': weights_pred, 'visibility': visibility}
+        if all_weights_pred:
+            weights_pred = torch.cat(all_weights_pred, dim=1).numpy()
+            
+            # 计算可见度 - 使用修复版本
+            visibility = self._calculate_visibility_fixed(weights_pred)
+            
+            return {'weights_pred': weights_pred, 'visibility': visibility}
+        else:
+            print("警告: 没有生成有效的预测结果")
+            return {'weights_pred': np.array([]), 'visibility': []}
 
     def _calculate_visibility_fixed(self, weights):
         """
@@ -202,6 +219,10 @@ class Trainer:
             weights = weights.cpu().numpy()
         
         # weights shape: [num_wavelengths, num_batches, num_regions_per_wavelength]
+        if weights.size == 0:  # 🔧 处理空数组
+            print("警告: 权重数组为空，返回空的可见度列表")
+            return []
+            
         num_wavelengths, num_batches, num_regions_per_wavelength = weights.shape
         num_modes = self.config.num_modes
         
@@ -220,8 +241,12 @@ class Trainer:
                     # 获取该模式的能量
                     energy = weights[0, batch_idx, mode_idx]  # 单波长，索引为0
                     
-                    # 简单的可见度计算
-                    visibility = min(1.0, max(0.0, float(energy)))
+                    # 🔧 改进的可见度计算
+                    if isinstance(energy, (np.ndarray, torch.Tensor)):
+                        energy = float(energy)
+                    
+                    # 确保能量值在合理范围内
+                    visibility = max(0.0, min(1.0, float(energy)))
                     mode_vis_across_batches.append(visibility)
                 
                 avg_visibility = np.mean(mode_vis_across_batches) if mode_vis_across_batches else 0.0
@@ -242,8 +267,11 @@ class Trainer:
                         # 获取该波长该模式的能量
                         energy = weights[wl_idx, batch_idx, mode_idx]
                         
-                        # 简单的可见度计算
-                        visibility = min(1.0, max(0.0, float(energy)))
+                        # 🔧 改进的可见度计算
+                        if isinstance(energy, (np.ndarray, torch.Tensor)):
+                            energy = float(energy)
+                        
+                        visibility = max(0.0, min(1.0, float(energy)))
                         mode_vis_across_batches.append(visibility)
                     
                     avg_visibility = np.mean(mode_vis_across_batches) if mode_vis_across_batches else 0.0
@@ -297,75 +325,6 @@ class Trainer:
         except Exception as e:
             print(f"✗ 加载模型失败: {e}")
             return None, None
-
-    def evaluate_model_with_cross_matrix(self, model, test_inputs, layer_count):
-        """
-        使用交叉矩阵和SNR评估模型
-        """
-        model.eval()
-        with torch.no_grad():
-            # 获取相位掩膜
-            phase_masks = []
-            for layer in model.layers:
-                if hasattr(layer, 'phase_mask'):
-                    phase_masks.append(layer.phase_mask.detach())
-            
-            # 创建模拟器
-            simulator = Simulator(
-                self.config.H, self.config.W, self.config.dx,
-                self.config.wavelengths, self.config.propagation_distance,
-                phase_masks, self.config.target_positions
-            )
-            
-            # 运行模拟
-            outputs = []
-            for mode_idx in range(self.config.num_modes):
-                mode_input = test_inputs[mode_idx:mode_idx+1]  # [1, num_wl, H, W]
-                mode_output = simulator(mode_input)  # [1, num_wl, H, W]
-                outputs.append(mode_output[0])  # [num_wl, H, W]
-            
-            outputs = torch.stack(outputs)  # [num_modes, num_wl, H, W]
-            
-            # 计算交叉矩阵和SNR
-            cross_matrix, snr_matrix, focus_metrics = calculate_cross_matrix_and_snr(
-                outputs, self.config.target_positions, radius=self.config.focus_radius
-            )
-            
-            # 打印分析结果
-            separation_quality, avg_snrs = print_cross_matrix_analysis(
-                cross_matrix, snr_matrix, focus_metrics, self.config.wavelengths
-            )
-            
-            return {
-                'cross_matrix': cross_matrix,
-                'snr_matrix': snr_matrix,
-                'focus_metrics': focus_metrics,
-                'separation_quality': separation_quality,
-                'avg_snrs': avg_snrs,
-                'outputs': outputs
-            }
-
-    def train_single_configuration(self, num_layers):
-        """
-        修改后的训练函数，使用新的评估方法
-        """
-        # ... 原有的训练代码 ...
-        
-        # 训练完成后的评估
-        print(f"\n🔍 评估 {num_layers} 层模型...")
-        evaluation_results = self.evaluate_model_with_cross_matrix(model, test_inputs, num_layers)
-        
-        # 保存结果
-        results = {
-            'num_layers': num_layers,
-            'cross_matrix': evaluation_results['cross_matrix'],
-            'snr_matrix': evaluation_results['snr_matrix'],
-            'separation_quality': evaluation_results['separation_quality'],
-            'avg_snrs': evaluation_results['avg_snrs'],
-            'focus_metrics': evaluation_results['focus_metrics']
-        }
-        
-        return model, results
 
 class EnhancedTrainer(Trainer):
     """增强的训练器，支持 Zero Padding 模型"""
