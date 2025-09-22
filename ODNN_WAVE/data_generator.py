@@ -90,23 +90,50 @@ class MultiModeMultiWavelengthDataGenerator:
 
     def generate_labels_by_wavelength(self):
         """
-        按波长分列生成标签 - 修复版本
+        按波长分列生成标签 - 支持单波长的修复版本
         """
         labels = torch.zeros(self.config.num_modes, len(self.config.wavelengths), 
                             self.config.layer_size, self.config.layer_size)
         
-        # 使用按波长分列的评估区域
+        # 🔧 传入模式数量参数
         regions = create_evaluation_regions_by_wavelength(
             self.config.layer_size, 
             self.config.layer_size, 
             self.config.focus_radius, 
             detectsize=self.config.detectsize,
-            offsets=self.config.offsets
+            offsets=self.config.offsets,
+            num_modes=self.config.num_modes  # 添加这个参数
         )
         
         print(f"创建标签 - 区域数: {len(regions)}, 标签形状: {labels.shape}")
         
-        # 🔧 关键修复：确保区域索引与标签索引的对应关系正确
+        # 🔧 单波长特殊处理
+        if len(self.config.wavelengths) == 1:
+            print("单波长标签生成")
+            # 单波长情况下，区域按模式顺序创建
+            for mode_idx in range(self.config.num_modes):
+                if mode_idx < len(regions):
+                    # 从evaluation region获取中心位置
+                    x_start, x_end, y_start, y_end = regions[mode_idx]
+                    center_x = (x_start + x_end) / 2
+                    center_y = (y_start + y_end) / 2
+                    
+                    # 创建高斯焦点分布
+                    y, x = torch.meshgrid(torch.arange(self.config.layer_size), 
+                                        torch.arange(self.config.layer_size), indexing='ij')
+                    
+                    distance = torch.sqrt((x - center_x)**2 + (y - center_y)**2)
+                    sigma = self.config.focus_radius / 3
+                    gaussian = torch.exp(-distance**2 / (2 * sigma**2))
+                    
+                    # 单波长情况：wl_idx = 0
+                    labels[mode_idx, 0] = gaussian / gaussian.max()
+                    
+                    print(f"  模式{mode_idx+1}: 区域{mode_idx} -> 标签[{mode_idx}, 0], 中心({center_x:.1f}, {center_y:.1f})")
+            
+            return labels
+        
+        # 🔧 多波长情况保持原有逻辑
         region_idx = 0
         for wl_idx in range(len(self.config.wavelengths)):    # 区域创建的外层循环
             for mode_idx in range(self.config.num_modes):     # 区域创建的内层循环
@@ -128,7 +155,7 @@ class MultiModeMultiWavelengthDataGenerator:
                     # 区域按 (wl_idx, mode_idx) 创建，标签按 [mode_idx, wl_idx] 存储
                     labels[mode_idx, wl_idx] = gaussian / gaussian.max()
                     
-                    print(f"  区域{region_idx}: wl{wl_idx+1}_mode{mode_idx+1} -> 标签[{mode_idx}, {wl_idx}]")
+                    print(f"  区域{region_idx}: wl{wl_idx+1}_mode{mode_idx+1} -> 标签[{mode_idx}, {wl_idx}], 中心({center_x:.1f}, {center_y:.1f})")
                     region_idx += 1
                 else:
                     print(f"  ⚠️ 区域索引{region_idx}超出范围")
@@ -177,13 +204,7 @@ class MultiModeMultiWavelengthDataGenerator:
 # 🔧 将可视化函数移到类外部作为独立函数
 def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_colorbar=False):
     """
-    按波长分列的标签可视化
-    
-    参数:
-        labels: torch.Tensor, shape [modes, wavelengths, H, W]
-        wavelengths: list or array, 波长列表
-        save_path: str, 保存路径（可选）
-        show_colorbar: bool, 是否显示颜色条（默认False）
+    按波长分列的标签可视化 - 简洁版本
     """
     # 转换为numpy数组
     if torch.is_tensor(labels):
@@ -193,10 +214,9 @@ def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_col
     num_wl = labels.shape[1]
     
     print(f"可视化标签: {num_modes} 个模式, {num_wl} 个波长")
-    print(f"标签形状: {labels.shape}")
     
-    # 创建图像，列对应波长，行对应模式
-    fig, axes = plt.subplots(num_modes, num_wl, figsize=(num_wl*4, num_modes*4))
+    # 创建图像，移除多余的间距和对齐
+    fig, axes = plt.subplots(num_modes, num_wl, figsize=(num_wl*3, num_modes*3))
     
     # 处理单行或单列的情况
     if num_modes == 1 and num_wl == 1:
@@ -206,40 +226,26 @@ def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_col
     elif num_wl == 1:
         axes = axes.reshape(-1, 1)
     
-    # 设置列标题（波长）
-    for wl_idx in range(num_wl):
-        wl_nm = int(wavelengths[wl_idx] * 1e9)
-        axes[0, wl_idx].set_title(f'λ = {wl_nm}nm', fontsize=14, fontweight='bold', pad=20)
-    
-    # 设置行标题（模式）
-    for mode_idx in range(num_modes):
-        axes[mode_idx, 0].set_ylabel(f'MODE {mode_idx+1}', fontsize=12, fontweight='bold')
-    
-    # 绘制每个标签
+    # 绘制每个标签，不添加标题和标签
     for mode_idx in range(num_modes):
         for wl_idx in range(num_wl):
             label_data = labels[mode_idx, wl_idx]
             
-            # 检查数据范围
-            vmin, vmax = label_data.min(), label_data.max()
-            print(f"  模式 {mode_idx+1}, 波长 {wl_idx+1}: 数据范围 [{vmin:.3f}, {vmax:.3f}]")
-            
-            # 绘制图像
+            # 绘制图像，移除所有装饰
             im = axes[mode_idx, wl_idx].imshow(label_data, 
                                              cmap='plasma', 
                                              vmin=0, vmax=1,
                                              interpolation='bilinear')
-            axes[mode_idx, wl_idx].axis('off')
+            axes[mode_idx, wl_idx].axis('off')  # 移除坐标轴
             
-            # 🔧 只有在需要时才添加颜色条
-            if show_colorbar:
-                plt.colorbar(im, ax=axes[mode_idx, wl_idx], fraction=0.046, pad=0.04)
+            # 不添加颜色条，保持简洁
     
-    plt.tight_layout()
+    # 移除子图间的间距
+    plt.subplots_adjust(wspace=0, hspace=0)
     
     if save_path is not None and isinstance(save_path, str):
         try:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
             print(f"✓ 图像已保存到: {save_path}")
         except Exception as e:
             print(f"⚠️  保存图像失败: {e}")
@@ -349,3 +355,4 @@ def generate_fields_ts(complex_weights, MMF_data, num_data, num_modes, image_siz
         image_data[idx,0] = field1
 
     return image_data
+

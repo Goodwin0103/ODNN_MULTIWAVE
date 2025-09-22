@@ -290,13 +290,13 @@ class Visualizer:
         n_wavelengths = len(wavelengths)
         if n_wavelengths == 1:
             rows, cols = 1, 1
-            figsize = (10, 6)
+            figsize = (10, 8)
         elif n_wavelengths == 2:
             rows, cols = 1, 2
-            figsize = (20, 6)
+            figsize = (20, 8)
         elif n_wavelengths == 3:
             rows, cols = 1, 3
-            figsize = (24, 8)  # 增加高度以匹配您的图片
+            figsize = (24, 10)  
         else:
             rows = (n_wavelengths + 2) // 3
             cols = 3

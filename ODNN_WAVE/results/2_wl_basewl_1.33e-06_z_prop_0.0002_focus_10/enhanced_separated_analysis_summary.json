@@ -1,6 +1,6 @@
 {
   "analysis_type": "separated_cross_matrix_snr_enhanced",
-  "timestamp": "2025-09-17T00:05:50",
+  "timestamp": "2025-09-19T15:30:32",
   "total_configurations": 30,
   "enhanced_wavelength_analysis": true,
   "cross_matrix_analysis": {
@@ -11,10 +11,10 @@
       "max_intensity": 52.623191833496094
     },
     "statistics": {
-      "mean": 0.3900583232349129,
+      "mean": 0.3900583232349128,
       "max": 0.9408006614388635,
       "min": 0.05510404796850306,
-      "std": 0.2929051151806206,
+      "std": 0.2929051151806207,
       "count": 30
     }
   },
