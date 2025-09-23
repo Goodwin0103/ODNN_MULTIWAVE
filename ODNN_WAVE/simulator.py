@@ -1408,62 +1408,6 @@ class Simulator:
         
         return result
 
-    def _save_single_step_image(self, field, title, distance_um, save_dir, filename_prefix, mode_idx, wl_nm):
-        """
-        保存单个传播步骤的图像
-        
-        参数:
-            field: 光场数据 (torch.Tensor)
-            title: 图像标题
-            distance_um: 传播距离（微米）
-            save_dir: 保存目录
-            filename_prefix: 文件名前缀
-            mode_idx: 模式索引
-            wl_nm: 波长（纳米）
-        
-        返回:
-            str: 保存的文件路径，如果失败则返回None
-        """
-        try:
-            # 转换为numpy数组
-            if isinstance(field, torch.Tensor):
-                field_np = field.detach().cpu().numpy()
-            else:
-                field_np = field
-            
-            # 计算强度
-            intensity = np.abs(field_np) ** 2
-            
-            # 创建图像
-            plt.figure(figsize=(8, 6))
-            im = plt.imshow(intensity, cmap='hot', origin='lower')
-            plt.colorbar(im, label='Intensity')
-            
-            # 设置标题和标签
-            plt.title(title, fontsize=12, fontweight='bold')
-            plt.xlabel('X (pixels)')
-            plt.ylabel('Y (pixels)')
-            
-            # 添加统计信息
-            max_intensity = np.max(intensity)
-            total_energy = np.sum(intensity)
-            plt.text(0.02, 0.98, f'Max: {max_intensity:.3f}\nEnergy: {total_energy:.2e}', 
-                    transform=plt.gca().transAxes, verticalalignment='top',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                    fontsize=10)
-            
-            # 保存图像
-            filename = f"{filename_prefix}_{distance_um:.1f}um.png"
-            filepath = os.path.join(save_dir, filename)
-            plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
-            plt.close()  # 关闭图像以释放内存
-            
-            print(f"  💾 保存单步图像: {filename}")
-            return filepath
-            
-        except Exception as e:
-            print(f"  ❌ 保存单步图像失败: {e}")
-            return None
 
     def _plot_propagation_steps_enhanced(self, propagation_steps, mode_idx, wavelength_idx, wl_nm, 
                                         show_plots=True, save_complete=False, save_dir=None):
@@ -1616,4 +1560,79 @@ class Simulator:
             
         except Exception as e:
             print(f"❌ 保存配置文件失败: {e}")
+            return None
+
+    def _save_single_step_image(self, field, title, distance_um, save_dir, filename_prefix, mode_idx, wl_nm, 
+                            save_clean=True):
+        """
+        保存单个传播步骤的图像 - 支持纯净版本
+        
+        参数:
+            field: 光场数据 (torch.Tensor)
+            title: 图像标题
+            distance_um: 传播距离（微米）
+            save_dir: 保存目录
+            filename_prefix: 文件名前缀
+            mode_idx: 模式索引
+            wl_nm: 波长（纳米）
+            save_clean: 是否保存纯净版本（无标题、无colorbar）
+        
+        返回:
+            str: 保存的文件路径，如果失败则返回None
+        """
+        try:
+            # 转换为numpy数组
+            if isinstance(field, torch.Tensor):
+                field_np = field.detach().cpu().numpy()
+            else:
+                field_np = field
+            
+            # 计算强度
+            intensity = np.abs(field_np) ** 2
+            
+            if save_clean:
+                # 保存纯净版本 - 无标题、无colorbar、无坐标轴
+                plt.figure(figsize=(8, 8))  # 正方形图像
+                plt.imshow(intensity, cmap='hot', origin='lower')
+                plt.axis('off')  # 关闭坐标轴
+                
+                # 保存纯净图像
+                clean_filename = f"{filename_prefix}_{distance_um:.1f}um_clean.png"
+                clean_filepath = os.path.join(save_dir, clean_filename)
+                plt.savefig(clean_filepath, dpi=300, bbox_inches='tight', pad_inches=0, 
+                        facecolor='black', edgecolor='none')
+                plt.close()
+                
+                print(f"  💾 保存纯净图像: {clean_filename}")
+                return clean_filepath
+            else:
+                # 保存带标注的版本（原有功能）
+                plt.figure(figsize=(8, 6))
+                im = plt.imshow(intensity, cmap='hot', origin='lower')
+                plt.colorbar(im, label='Intensity')
+                
+                # 设置标题和标签
+                plt.title(title, fontsize=12, fontweight='bold')
+                plt.xlabel('X (pixels)')
+                plt.ylabel('Y (pixels)')
+                
+                # 添加统计信息
+                max_intensity = np.max(intensity)
+                total_energy = np.sum(intensity)
+                plt.text(0.02, 0.98, f'Max: {max_intensity:.3f}\nEnergy: {total_energy:.2e}', 
+                        transform=plt.gca().transAxes, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                        fontsize=10)
+                
+                # 保存带标注的图像
+                filename = f"{filename_prefix}_{distance_um:.1f}um.png"
+                filepath = os.path.join(save_dir, filename)
+                plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
+                plt.close()
+                
+                print(f"  💾 保存标注图像: {filename}")
+                return filepath
+            
+        except Exception as e:
+            print(f"  ❌ 保存图像失败: {e}")
             return None
