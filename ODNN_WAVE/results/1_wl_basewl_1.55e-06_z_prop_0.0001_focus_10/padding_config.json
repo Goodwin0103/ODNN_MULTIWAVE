@@ -11,5 +11,5 @@
   ],
   "default_num_layers": 3,
   "model_type": "Zero Padding Enhanced",
-  "training_time": 54.95049285888672
+  "training_time": 53.59513783454895
 }

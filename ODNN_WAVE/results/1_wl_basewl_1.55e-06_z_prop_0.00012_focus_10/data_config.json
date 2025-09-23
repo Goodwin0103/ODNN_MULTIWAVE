@@ -1,0 +1,15 @@
+{
+  "labels_shape": [
+    3,
+    1,
+    300,
+    300
+  ],
+  "evaluation_regions_count": 3,
+  "wavelengths_nm": [
+    1550.0
+  ],
+  "num_modes": 3,
+  "layer_size": 300,
+  "field_size": 50
+}

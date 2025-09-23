@@ -1,0 +1,18 @@
+{
+  "simulation_info": {
+    "mode_idx": 1,
+    "wavelength_idx": 0,
+    "wavelength_nm": 850,
+    "num_layers": 5,
+    "total_distance_um": 310.00000000000006
+  },
+  "system_config": {
+    "layer_size": 300,
+    "pixel_size": 1e-06,
+    "z_layers_um": 40.0,
+    "z_prop_um": 150.0,
+    "device": "cuda"
+  },
+  "timestamp": "2025-09-23T12:45:27.613484",
+  "version": "Enhanced Propagation Simulator v1.0"
+}
