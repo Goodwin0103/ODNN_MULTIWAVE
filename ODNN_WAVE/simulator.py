@@ -386,105 +386,7 @@ class Simulator:
             'max_region': 0
         }
 
-    
-    def _simulate_single_mode(self, phase_masks, input_field, mode_suffix=""):
-        """
-        模拟单个模式的光场传播
-        
-        参数:
-            phase_masks: 相位掩码列表 [num_layers][num_wavelengths][H, W]
-            input_field: 输入光场 [num_wavelengths, H, W]
-            mode_suffix: 模式后缀标识
-        
-        返回:
-            dict: 仿真结果
-        """
-        # *** 关键修复：确保输入场是 PyTorch 张量 ***
-        if isinstance(input_field, np.ndarray):
-            input_field = torch.from_numpy(input_field.copy())
-            print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
-        elif not isinstance(input_field, torch.Tensor):
-            input_field = torch.tensor(input_field)
-            print(f"✓ 将输入转换为 PyTorch 张量")
-        
-        # 确保是复数类型
-        if not input_field.dtype.is_complex:
-            if input_field.dtype.is_floating_point:
-                input_field = input_field.to(torch.complex64)
-            else:
-                input_field = input_field.to(torch.float32).to(torch.complex64)
-            print(f"✓ 转换为复数类型: {input_field.dtype}")
-        
-        print(f"输入字段维度: {input_field.ndim}D, 形状: {input_field.shape}")
-        
-        # 预处理输入场
-        field = self._preprocess_field_for_simulation(input_field)
-        
-        # 移动到设备
-        field = field.to(self.device)
-        
-        num_layers = len(phase_masks)
-        num_wavelengths = len(self.config.wavelengths)
-        
-        results = {}
-        
-        # 对每个波长进行仿真
-        for wl_idx, wavelength in enumerate(self.config.wavelengths):
-            wl_nm = int(wavelength * 1e9)
-            print(f"  λ = {wl_nm} nm")
-            
-            # 获取该波长的输入场
-            if field.ndim == 3:  # [num_wavelengths, H, W]
-                current_field = field[wl_idx]
-            elif field.ndim == 2:  # [H, W] - 单一场
-                current_field = field
-            else:
-                print(f"❌ 不支持的输入场维度: {field.shape}")
-                continue
-            
-            # 逐层传播
-            for layer_idx in range(num_layers):
-                # 应用相位掩码
-                if layer_idx < len(phase_masks) and wl_idx < len(phase_masks[layer_idx]):
-                    phase_mask = phase_masks[layer_idx][wl_idx]
-                    current_field = self._apply_phase_mask(current_field, phase_mask)
-                
-                # 传播到下一层（除了最后一层）
-                if layer_idx < num_layers - 1:
-                    current_field = self._angular_spectrum_propagate(
-                        current_field, self.config.z_layers, wavelength
-                    )
-            
-            # 最终传播到检测平面
-            current_field = self._angular_spectrum_propagate(
-                current_field, self.config.z_prop, wavelength
-            )
-            
-            print("  → 结束")
-            
-            # 计算聚焦质量
-            focus_quality = self._calculate_focus_quality(current_field, 0, wl_idx)
-            print(f"\n  聚焦质量{mode_suffix}:")
-            print(f"    质心位置: ({focus_quality['centroid_position'][0]:.1f}, {focus_quality['centroid_position'][1]:.1f})")
-            print(f"    峰值位置: {focus_quality['peak_position']}")
-            print(f"    聚焦比例: {focus_quality['focus_ratio']:.4f}")
-            print(f"    峰值强度: {focus_quality['peak_intensity']:.6f}")
-            
-            # 保存结果
-            self._save_simulation_result(
-                current_field, wavelength, 
-                int(mode_suffix.replace('_mode', '').replace('_', '')) - 1 if '_mode' in mode_suffix else 0,
-                num_layers
-            )
-            
-            results[f'wl_{wl_idx}'] = {
-                'field': current_field,
-                'focus_quality': focus_quality,
-                'wavelength': wavelength
-            }
-        
-        return results
-    
+
     def simulate_propagation(self, phase_masks, input_field, process_all_modes=True, mode_specific_masks=None):
         """
         执行光场传播仿真 - 添加坐标系调试
@@ -1143,26 +1045,13 @@ class Simulator:
                                         save_intermediate=False, show_plots=True, save_dir=None,
                                         save_individual_steps=False):
         """
-        显示光场单步传播过程的可视化 - 增强版本，支持自动保存每个步骤的图像
-        
-        参数:
-            phase_masks: 相位掩码列表 [num_layers][num_wavelengths][H, W]
-            input_fields: 输入光场 [num_modes, num_wavelengths, H, W] 或其他格式
-            mode_idx: 要显示的模式索引 (默认: 0)
-            wavelength_idx: 要显示的波长索引 (默认: 0)
-            save_intermediate: 是否保存中间结果 (默认: False)
-            show_plots: 是否显示图形 (默认: True)
-            save_dir: 保存目录 (默认: 使用配置中的目录)
-            save_individual_steps: 是否保存每个步骤的单独图像 (新增参数)
-        
-        返回:
-            dict: 包含所有传播步骤的结果
+        显示光场单步传播过程的可视化 - 使用z_layers作为到第一层的距离
         """
-        print(f"🎬 显示单步传播过程")
+        print(f"🎬 显示单步传播过程 - 使用z_layers到第一层")
         print(f"模式索引: {mode_idx}, 波长索引: {wavelength_idx}")
         
         # 打印配置信息用于调试（转换为微米）
-        print(f"z_layers: {self.config.z_layers * 1e6:.1f} μm")
+        print(f"z_layers: {self.config.z_layers * 1e6:.1f} μm (到第一层相位掩模的距离)")
         z_step_um = getattr(self.config, 'z_step', 0) * 1e6 if hasattr(self.config, 'z_step') else 0
         print(f"z_step: {z_step_um:.1f} μm" if z_step_um > 0 else "z_step: Not defined")
         print(f"z_prop: {self.config.z_prop * 1e6:.1f} μm")
@@ -1176,18 +1065,17 @@ class Simulator:
         # 创建专门的传播图像保存目录
         if save_individual_steps or save_intermediate:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            propagation_save_dir = os.path.join(save_dir, "propagation_images", 
+            propagation_save_dir = os.path.join(save_dir, "propagation_images_Z_LAYERS", 
                                             f"mode{mode_idx+1}_wl{wavelength_idx+1}_{timestamp}")
             os.makedirs(propagation_save_dir, exist_ok=True)
             print(f"📁 图像将保存到: {propagation_save_dir}")
         
-        # 确保输入场是 PyTorch 张量
+        # 输入场处理
         if isinstance(input_fields, np.ndarray):
             input_fields = torch.from_numpy(input_fields.copy())
         elif not isinstance(input_fields, torch.Tensor):
             input_fields = torch.tensor(input_fields)
         
-        # 确保是复数类型
         if not input_fields.dtype.is_complex:
             if input_fields.dtype.is_floating_point:
                 input_fields = input_fields.to(torch.complex64)
@@ -1233,7 +1121,7 @@ class Simulator:
         # 存储传播步骤
         propagation_steps = {}
         propagation_history = []
-        saved_individual_files = []  # 新增：保存单独图像文件列表
+        saved_individual_files = []
         
         # 初始场
         propagation_steps['initial'] = {
@@ -1254,60 +1142,122 @@ class Simulator:
             if step_file:
                 saved_individual_files.append(step_file)
         
-        # 逐层传播
-        num_layers = len(phase_masks)
+        # 🔧 **关键修改：直接传播到第一层相位掩模位置**
         step_counter = 1
         current_distance = 0  # 保持米为单位进行计算
+        num_layers = len(phase_masks)
         
+        print(f"\n🚀 传播到第一层相位掩模位置...")
+        print(f"传播距离: {self.config.z_layers * 1e6:.1f} μm")
+        
+        # 执行传播到第一层
+        current_distance += self.config.z_layers
+        current_field = self._angular_spectrum_propagate(
+            current_field, self.config.z_layers, wavelength
+        )
+        
+        # 保存传播到第一层后的场
+        step_key = 'before_first_layer'
+        propagation_steps[step_key] = {
+            'field': current_field.clone(),
+            'description': f'Before First Layer ({self.config.z_layers * 1e6:.1f} μm)',
+            'step_type': 'before_layer',
+            'distance_um': current_distance * 1e6
+        }
+        propagation_history.append((step_key, current_field.clone()))
+        print(f"✓ 步骤 {step_counter}: 传播到第一层位置 ({current_distance * 1e6:.1f} μm)")
+        
+        # 保存传播到第一层后的单独图像
+        if save_individual_steps:
+            step_file = self._save_single_step_image(
+                current_field, 
+                f'Step {step_counter+1}: Before First Layer ({self.config.z_layers * 1e6:.1f} μm)', 
+                current_distance * 1e6, propagation_save_dir, 
+                f"step_{step_counter+1:02d}_before_first_layer", 
+                mode_idx, wl_nm
+            )
+            if step_file:
+                saved_individual_files.append(step_file)
+        
+        step_counter += 1
+        
+        # 🔧 现在开始逐层处理
         for layer_idx in range(num_layers):
-            print(f"\n--- 第 {layer_idx+1} 层 ---")
+            print(f"\n--- 第 {layer_idx+1} 层 (位置: {current_distance * 1e6:.1f} μm) ---")
             
-            # 应用相位掩码
+            # 步骤1：应用相位掩码
             if layer_idx < len(phase_masks) and wavelength_idx < len(phase_masks[layer_idx]):
+                print(f"🎭 正在应用第{layer_idx+1}层相位掩码...")
+                
+                # 保存应用掩码前的场（用于对比）
+                field_before_mask = current_field.clone()
+                
+                # 应用相位掩码
                 phase_mask = phase_masks[layer_idx][wavelength_idx]
                 current_field = self._apply_phase_mask(current_field, phase_mask)
                 
-                # 保存应用掩码后的场
+                # 验证掩码是否真的起作用了
+                intensity_before = torch.abs(field_before_mask)**2
+                intensity_after = torch.abs(current_field)**2
+                intensity_changed = not torch.allclose(intensity_before, intensity_after, atol=1e-6)
+                
+                print(f"  相位掩码效果验证:")
+                print(f"    应用前能量: {torch.sum(intensity_before):.6f}")
+                print(f"    应用后能量: {torch.sum(intensity_after):.6f}")
+                print(f"    强度分布改变: {'是' if intensity_changed else '否'}")
+                
+                if not intensity_changed:
+                    print(f"  ⚠️⚠️⚠️ 警告：相位掩码没有改变光场分布！")
+                    print(f"  可能原因：相位掩码全零、数值太小、或应用方式有问题")
+                else:
+                    print(f"  ✅ 相位掩码成功应用")
+                
+                # 立即保存应用掩码后的场
                 step_key = f'layer_{layer_idx+1}_after_mask'
                 propagation_steps[step_key] = {
                     'field': current_field.clone(),
-                    'description': f'Layer {layer_idx+1} - After Phase Mask',
+                    'description': f'Layer {layer_idx+1} - After Phase Mask at {current_distance * 1e6:.1f} μm',
                     'step_type': 'after_mask',
                     'layer_idx': layer_idx,
                     'distance_um': current_distance * 1e6
                 }
                 propagation_history.append((step_key, current_field.clone()))
-                print(f"✓ 步骤 {step_counter}: 应用第{layer_idx+1}层相位掩码 ({current_distance * 1e6:.1f} μm)")
+                print(f"✓ 步骤 {step_counter}: 应用第{layer_idx+1}层相位掩码后 ({current_distance * 1e6:.1f} μm)")
                 
-                # 保存掩码后的单独图像
+                # 立即保存掩码后的单独图像
                 if save_individual_steps:
                     step_file = self._save_single_step_image(
-                        current_field, f'Step {step_counter+1}: Layer {layer_idx+1} - After Phase Mask', 
+                        current_field,
+                        f'Step {step_counter+1}: Layer {layer_idx+1} - After Phase Mask', 
                         current_distance * 1e6, propagation_save_dir, 
-                        f"step_{step_counter+1:02d}_layer_{layer_idx+1}_after_phase_mask", mode_idx, wl_nm
+                        f"step_{step_counter+1:02d}_layer_{layer_idx+1}_after_phase_mask", 
+                        mode_idx, wl_nm
                     )
                     if step_file:
                         saved_individual_files.append(step_file)
+                        print(f"  💾 已保存应用掩码后的图像")
                 
                 step_counter += 1
             
-            # 传播到下一层或检测平面
-            # 确定传播距离
+            # 步骤2：传播到下一层或检测平面
             if layer_idx < num_layers - 1:
+                # 传播到下一层（层间距离仍然是z_layers）
                 total_distance = self.config.z_layers
+                print(f"🚀 传播到下一层，距离: {total_distance*1e6:.1f} μm")
             else:
+                # 最后一层，传播到检测平面
                 total_distance = self.config.z_prop
+                print(f"🚀 传播到检测平面，距离: {total_distance*1e6:.1f} μm")
             
             # 计算需要的步数
             if hasattr(self.config, 'z_step') and self.config.z_step > 0:
                 num_steps = max(1, int(total_distance / self.config.z_step))
                 step_distance = total_distance / num_steps
             else:
-                # 如果没有定义 z_step 或者 z_step <= 0，使用默认分步
                 num_steps = 5  # 默认分为5步
                 step_distance = total_distance / num_steps
             
-            print(f"传播距离: {total_distance*1e6:.1f} μm, 分为 {num_steps} 步, 每步: {step_distance*1e6:.2f} μm")
+            print(f"分为 {num_steps} 步, 每步: {step_distance*1e6:.2f} μm")
             
             # 执行分步传播
             for step_idx in range(num_steps):
@@ -1318,10 +1268,10 @@ class Simulator:
                 
                 # 保存传播后的场
                 if layer_idx < num_layers - 1:
-                    step_key = f'layer_{layer_idx+1}_step_{step_idx+1}'
-                    description = f'Layer {layer_idx+1} - Step {step_idx+1} ({current_distance*1e6:.1f} μm)'
-                    step_type = 'after_propagation'
-                    filename_prefix = f"step_{step_counter+1:02d}_layer_{layer_idx+1}_propagation_{step_idx+1}"
+                    step_key = f'layer_{layer_idx+1}_to_{layer_idx+2}_step_{step_idx+1}'
+                    description = f'Layer {layer_idx+1} → {layer_idx+2} - Step {step_idx+1} ({current_distance*1e6:.1f} μm)'
+                    step_type = 'inter_layer_propagation'
+                    filename_prefix = f"step_{step_counter+1:02d}_layer_{layer_idx+1}_to_{layer_idx+2}_step_{step_idx+1}"
                 else:
                     if step_idx == num_steps - 1:
                         step_key = 'final'
@@ -1343,7 +1293,10 @@ class Simulator:
                     'distance_um': current_distance * 1e6
                 }
                 propagation_history.append((step_key, current_field.clone()))
-                print(f"✓ 步骤 {step_counter}: 传播至 {current_distance*1e6:.1f} μm")
+                
+                # 只在关键步骤打印进度
+                if step_idx == 0 or step_idx == num_steps - 1 or (step_idx + 1) % max(1, num_steps // 3) == 0:
+                    print(f"✓ 步骤 {step_counter}: 传播至 {current_distance*1e6:.1f} μm")
                 
                 # 保存传播后的单独图像
                 if save_individual_steps:
@@ -1360,7 +1313,7 @@ class Simulator:
         # 计算统计信息
         statistics = self._calculate_propagation_statistics(propagation_history)
         
-        # 可视化结果 - 修改为支持保存完整图像
+        # 可视化结果
         if show_plots or save_intermediate:
             complete_image_file = self._plot_propagation_steps_enhanced(
                 propagation_steps, mode_idx, wavelength_idx, wl_nm, 
@@ -1395,10 +1348,10 @@ class Simulator:
             'wavelength_idx': wavelength_idx,
             'wavelength_nm': wl_nm,
             'total_distance_um': current_distance * 1e6,
-            'saved_files': saved_individual_files  # 新增：返回保存的文件列表
+            'saved_files': saved_individual_files
         }
         
-        print(f"\n✅ 单步传播显示完成！")
+        print(f"\n✅ 使用z_layers的单步传播显示完成！")
         print(f"总步数: {len(propagation_history)}")
         print(f"总传播距离: {current_distance * 1e6:.1f} μm")
         print(f"能量守恒: {statistics.get('energy_conservation', 0):.4f}")
@@ -1407,6 +1360,115 @@ class Simulator:
             print(f"📁 保存目录: {propagation_save_dir}")
         
         return result
+
+    def _simulate_single_mode(self, phase_masks, input_field, mode_suffix=""):
+        """
+        模拟单个模式的光场传播 - 使用z_layers作为到第一层的距离
+        
+        参数:
+            phase_masks: 相位掩码列表 [num_layers][num_wavelengths][H, W]
+            input_field: 输入光场 [num_wavelengths, H, W]
+            mode_suffix: 模式后缀标识
+        
+        返回:
+            dict: 仿真结果
+        """
+        # *** 关键修复：确保输入场是 PyTorch 张量 ***
+        if isinstance(input_field, np.ndarray):
+            input_field = torch.from_numpy(input_field.copy())
+            print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
+        elif not isinstance(input_field, torch.Tensor):
+            input_field = torch.tensor(input_field)
+            print(f"✓ 将输入转换为 PyTorch 张量")
+        
+        # 确保是复数类型
+        if not input_field.dtype.is_complex:
+            if input_field.dtype.is_floating_point:
+                input_field = input_field.to(torch.complex64)
+            else:
+                input_field = input_field.to(torch.float32).to(torch.complex64)
+            print(f"✓ 转换为复数类型: {input_field.dtype}")
+        
+        print(f"输入字段维度: {input_field.ndim}D, 形状: {input_field.shape}")
+        
+        # 预处理输入场
+        field = self._preprocess_field_for_simulation(input_field)
+        
+        # 移动到设备
+        field = field.to(self.device)
+        
+        num_layers = len(phase_masks)
+        num_wavelengths = len(self.config.wavelengths)
+        
+        results = {}
+        
+        # 对每个波长进行仿真
+        for wl_idx, wavelength in enumerate(self.config.wavelengths):
+            wl_nm = int(wavelength * 1e9)
+            print(f"  λ = {wl_nm} nm")
+            
+            # 获取该波长的输入场
+            if field.ndim == 3:  # [num_wavelengths, H, W]
+                current_field = field[wl_idx]
+            elif field.ndim == 2:  # [H, W] - 单一场
+                current_field = field
+            else:
+                print(f"❌ 不支持的输入场维度: {field.shape}")
+                continue
+            
+            # 🔧 **关键修改：先传播到第一层相位掩模位置**
+            print(f"  🚀 传播 {self.config.z_layers * 1e6:.1f} μm 到第一层相位掩模")
+            current_field = self._angular_spectrum_propagate(
+                current_field, self.config.z_layers, wavelength
+            )
+            
+            # 逐层传播
+            for layer_idx in range(num_layers):
+                print(f"  处理第 {layer_idx+1} 层...")
+                
+                # 应用相位掩码
+                if layer_idx < len(phase_masks) and wl_idx < len(phase_masks[layer_idx]):
+                    phase_mask = phase_masks[layer_idx][wl_idx]
+                    current_field = self._apply_phase_mask(current_field, phase_mask)
+                    print(f"    ✓ 应用相位掩码")
+                
+                # 传播到下一层（除了最后一层）
+                if layer_idx < num_layers - 1:
+                    print(f"    🚀 传播 {self.config.z_layers * 1e6:.1f} μm 到下一层")
+                    current_field = self._angular_spectrum_propagate(
+                        current_field, self.config.z_layers, wavelength
+                    )
+            
+            # 最终传播到检测平面
+            print(f"  🚀 最终传播 {self.config.z_prop * 1e6:.1f} μm 到检测平面")
+            current_field = self._angular_spectrum_propagate(
+                current_field, self.config.z_prop, wavelength
+            )
+            
+            print("  → 结束")
+            
+            # 计算聚焦质量
+            focus_quality = self._calculate_focus_quality(current_field, 0, wl_idx)
+            print(f"\n  聚焦质量{mode_suffix}:")
+            print(f"    质心位置: ({focus_quality['centroid_position'][0]:.1f}, {focus_quality['centroid_position'][1]:.1f})")
+            print(f"    峰值位置: {focus_quality['peak_position']}")
+            print(f"    聚焦比例: {focus_quality['focus_ratio']:.4f}")
+            print(f"    峰值强度: {focus_quality['peak_intensity']:.6f}")
+            
+            # 保存结果
+            self._save_simulation_result(
+                current_field, wavelength, 
+                int(mode_suffix.replace('_mode', '').replace('_', '')) - 1 if '_mode' in mode_suffix else 0,
+                num_layers
+            )
+            
+            results[f'wl_{wl_idx}'] = {
+                'field': current_field,
+                'focus_quality': focus_quality,
+                'wavelength': wavelength
+            }
+        
+        return results
 
 
     def _plot_propagation_steps_enhanced(self, propagation_steps, mode_idx, wavelength_idx, wl_nm, 

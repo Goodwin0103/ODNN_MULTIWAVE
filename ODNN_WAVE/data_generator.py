@@ -201,10 +201,9 @@ class MultiModeMultiWavelengthDataGenerator:
         # 创建DataLoader
         return DataLoader(train_tensor_data, batch_size=self.config.batch_size, shuffle=False)
 
-# 🔧 将可视化函数移到类外部作为独立函数
 def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_colorbar=False):
     """
-    按波长分列的标签可视化 - 简洁版本
+    按波长分列的标签可视化 - 黑底纯净版本
     """
     # 转换为numpy数组
     if torch.is_tensor(labels):
@@ -215,59 +214,89 @@ def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_col
     
     print(f"可视化标签: {num_modes} 个模式, {num_wl} 个波长")
     
-    # 创建图像，移除多余的间距和对齐
-    fig, axes = plt.subplots(num_modes, num_wl, figsize=(num_wl*3, num_modes*3))
+    # 🔧 创建黑底图像 - 设置黑色背景
+    fig = plt.figure(figsize=(num_wl*3, num_modes*3), facecolor='black')
     
-    # 处理单行或单列的情况
-    if num_modes == 1 and num_wl == 1:
-        axes = np.array([[axes]])
-    elif num_modes == 1:
-        axes = axes.reshape(1, -1)
-    elif num_wl == 1:
-        axes = axes.reshape(-1, 1)
+    # 创建子图网格
+    axes = []
+    for i in range(num_modes * num_wl):
+        ax = fig.add_subplot(num_modes, num_wl, i+1, facecolor='black')
+        axes.append(ax)
     
-    # 绘制每个标签，不添加标题和标签
+    # 重新整理axes为2D数组
+    axes = np.array(axes).reshape(num_modes, num_wl)
+    
+    # 🔧 绘制每个标签，使用黑底配色
     for mode_idx in range(num_modes):
         for wl_idx in range(num_wl):
             label_data = labels[mode_idx, wl_idx]
             
-            # 绘制图像，移除所有装饰
+            # 🔧 使用热图配色方案，黑色为背景
             im = axes[mode_idx, wl_idx].imshow(label_data, 
-                                             cmap='plasma', 
+                                             cmap='hot',  # 改为hot配色，黑底红黄色
                                              vmin=0, vmax=1,
                                              interpolation='bilinear')
-            axes[mode_idx, wl_idx].axis('off')  # 移除坐标轴
             
-            # 不添加颜色条，保持简洁
+            # 🔧 移除所有装饰，设置黑色背景
+            axes[mode_idx, wl_idx].axis('off')
+            axes[mode_idx, wl_idx].set_facecolor('black')
+            
+            # 🔧 添加模式和波长标识（白色文字）
+            if wavelengths is not None and wl_idx < len(wavelengths):
+                wl_nm = int(wavelengths[wl_idx] * 1e9)
+                axes[mode_idx, wl_idx].text(0.02, 0.98, f'M{mode_idx+1}', 
+                                          transform=axes[mode_idx, wl_idx].transAxes,
+                                          color='white', fontsize=12, fontweight='bold',
+                                          verticalalignment='top')
+                
+                # 只在第一行添加波长标识
+                if mode_idx == 0:
+                    axes[mode_idx, wl_idx].text(0.5, 0.98, f'λ = {wl_nm}nm', 
+                                              transform=axes[mode_idx, wl_idx].transAxes,
+                                              color='white', fontsize=10,
+                                              horizontalalignment='center',
+                                              verticalalignment='top')
     
-    # 移除子图间的间距
-    plt.subplots_adjust(wspace=0, hspace=0)
+    # 🔧 移除子图间的间距，保持黑色背景
+    plt.subplots_adjust(wspace=0.02, hspace=0.02, 
+                       left=0.01, right=0.99, 
+                       top=0.99, bottom=0.01)
     
+    # 🔧 保存为黑底图像
     if save_path is not None and isinstance(save_path, str):
         try:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
-            print(f"✓ 图像已保存到: {save_path}")
+            plt.savefig(save_path, dpi=300, 
+                       bbox_inches='tight', 
+                       pad_inches=0.02,
+                       facecolor='black',  # 确保保存时背景为黑色
+                       edgecolor='none')
+            print(f"✓ 黑底标签图像已保存到: {save_path}")
         except Exception as e:
             print(f"⚠️  保存图像失败: {e}")
     
     plt.show()
 
-def visualize_labels(labels, wavelengths=None, save_path=None, show_colorbar=False):
+def visualize_labels(labels, wavelengths=None, save_path=None, show_colorbar=False, 
+                    style='clean_black'):
     """
-    通用标签可视化函数
+    通用标签可视化函数 - 支持多种风格
     
     参数:
         labels: 标签数据
         wavelengths: 波长列表（可选）
         save_path: 保存路径（可选）
         show_colorbar: bool, 是否显示颜色条（默认False）
+        style: str, 可视化风格 ('clean_black', 'default')
     """
-    print(f"标签可视化 - 输入形状: {labels.shape}")
+    print(f"标签可视化 - 输入形状: {labels.shape}, 风格: {style}")
     
     if wavelengths is not None and not isinstance(wavelengths, str):
         if labels.ndim == 4:  # [modes, wavelengths, H, W]
             print(f"使用4D标签可视化，波长: {[f'{wl*1e9:.0f}nm' for wl in wavelengths]}")
-            visualize_labels_by_wavelength(labels, wavelengths, save_path, show_colorbar)
+            if style == 'clean_black':
+                visualize_labels_by_wavelength(labels, wavelengths, save_path, show_colorbar)
+            else:
+                visualize_labels_by_wavelength_default(labels, wavelengths, save_path, show_colorbar)
             return
     
     # 默认处理
@@ -278,81 +307,119 @@ def visualize_labels(labels, wavelengths=None, save_path=None, show_colorbar=Fal
         
     elif labels.ndim == 3:  # [channels, H, W]
         print("使用3D标签可视化")
-        num_channels = labels.shape[0]
-        
-        fig, axes = plt.subplots(1, num_channels, figsize=(num_channels*4, 4))
-        if num_channels == 1:
-            axes = [axes]
-        
-        for i in range(num_channels):
-            data = labels[i].numpy() if torch.is_tensor(labels) else labels[i]
-            im = axes[i].imshow(data, cmap='plasma', vmin=0, vmax=1)
-            axes[i].set_title(f'Channel {i+1}')
-            axes[i].axis('off')
-            
-            if show_colorbar:
-                plt.colorbar(im, ax=axes[i], fraction=0.046, pad=0.04)
-        
-        plt.tight_layout()
-        
-        if save_path is not None and isinstance(save_path, str):
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
-        plt.show()
+        _visualize_3d_labels_clean_black(labels, save_path, show_colorbar)
         
     else:  # 2D 或其他
         print("使用2D标签可视化")
-        plt.figure(figsize=(8, 6))
-        data = labels.numpy() if torch.is_tensor(labels) else labels
+        _visualize_2d_labels_clean_black(labels, save_path, show_colorbar)
+
+def _visualize_3d_labels_clean_black(labels, save_path=None, show_colorbar=False):
+    """3D标签的黑底可视化"""
+    num_channels = labels.shape[0]
+    
+    # 🔧 创建黑底图像
+    fig = plt.figure(figsize=(num_channels*4, 4), facecolor='black')
+    
+    axes = []
+    for i in range(num_channels):
+        ax = fig.add_subplot(1, num_channels, i+1, facecolor='black')
+        axes.append(ax)
+    
+    for i in range(num_channels):
+        data = labels[i].numpy() if torch.is_tensor(labels) else labels[i]
         
-        if data.ndim > 2:
-            data = np.sum(data, axis=tuple(range(data.ndim-2)))
+        # 🔧 使用热图配色
+        im = axes[i].imshow(data, cmap='hot', vmin=0, vmax=1)
         
-        im = plt.imshow(data, cmap='plasma')
-        plt.title('标签可视化')
+        # 🔧 白色标题，移除坐标轴
+        axes[i].text(0.02, 0.98, f'M{i+1}', 
+                    transform=axes[i].transAxes,
+                    color='white', fontsize=14, fontweight='bold',
+                    verticalalignment='top')
+        axes[i].axis('off')
+        axes[i].set_facecolor('black')
+        
         if show_colorbar:
-            plt.colorbar(im)
-        plt.axis('off')
-        
-        if save_path is not None and isinstance(save_path, str):
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
-        plt.show()
+            cbar = plt.colorbar(im, ax=axes[i], fraction=0.046, pad=0.04)
+            cbar.ax.yaxis.set_tick_params(color='white')
+            cbar.ax.yaxis.set_ticklabels(cbar.ax.yaxis.get_ticklabels(), color='white')
+    
+    plt.subplots_adjust(wspace=0.02, hspace=0.02)
+    
+    if save_path is not None and isinstance(save_path, str):
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', 
+                   facecolor='black', edgecolor='none')
+        print(f"✓ 黑底3D标签图像已保存到: {save_path}")
+    
+    plt.show()
 
-def generate_fields_ts(complex_weights, MMF_data, num_data, num_modes, image_size,
-                       wavelength=None, z0=40e-6, dx=1e-6, device='cpu'):
+def _visualize_2d_labels_clean_black(labels, save_path=None, show_colorbar=False):
+    """2D标签的黑底可视化"""
+    # 🔧 创建黑底图像
+    fig = plt.figure(figsize=(8, 6), facecolor='black')
+    ax = fig.add_subplot(111, facecolor='black')
+    
+    data = labels.numpy() if torch.is_tensor(labels) else labels
+    
+    if data.ndim > 2:
+        data = np.sum(data, axis=tuple(range(data.ndim-2)))
+    
+    # 🔧 使用热图配色
+    im = ax.imshow(data, cmap='hot')
+    
+    # 🔧 白色标题，移除坐标轴
+    ax.text(0.5, 0.98, '标签可视化', 
+           transform=ax.transAxes,
+           color='white', fontsize=16, fontweight='bold',
+           horizontalalignment='center', verticalalignment='top')
+    ax.axis('off')
+    
+    if show_colorbar:
+        cbar = plt.colorbar(im)
+        cbar.ax.yaxis.set_tick_params(color='white')
+        cbar.ax.yaxis.set_ticklabels(cbar.ax.yaxis.get_ticklabels(), color='white')
+    
+    if save_path is not None and isinstance(save_path, str):
+        plt.savefig(save_path, dpi=300, bbox_inches='tight',
+                   facecolor='black', edgecolor='none')
+        print(f"✓ 黑底2D标签图像已保存到: {save_path}")
+    
+    plt.show()
+
+# 🔧 保留原版本作为备用
+def visualize_labels_by_wavelength_default(labels, wavelengths, save_path=None, show_colorbar=False):
     """
-    生成场分布并从光纤输出传播到第一个相位屏。
-
-    参数:
-        complex_weights (Tensor): [num_data, num_modes], complex64.
-        MMF_data       (Tensor): [num_modes, H, W], complex64 at fiber output.
-        num_data (int), num_modes (int), image_size (int)
-        wavelength (float): chosen lambda (m)
-        z0 (float): fiber→first-screen distance (m)
-        dx (float): pixel pitch (m)
-        device (str): 'cpu' or 'cuda:0'
-
-    返回:
-        image_data: [num_data,1,H,W], complex64, field on first screen.
+    按波长分列的标签可视化 - 原版本（白底）
     """
-    MMF_data = MMF_data.to(device)
-    image_data = torch.zeros([num_data, 1, image_size, image_size],
-                             dtype=torch.complex64, device=device)
-
-    for idx in range(num_data):
-        # 1) 叠加模式
-        w = complex_weights[idx].view(num_modes,1,1).to(device)
-        field0 = torch.sum(w * MMF_data, dim=0)  # [H,W], at fiber output
-
-        if wavelength is not None:
-            # 2) 真实自由空间传播到第一个相位屏
-            #    propagation(E, z_start, z_prop, N, dx, device, wavelength)
-            field1 = propagation(field0, z0, wavelength, image_size, dx, device)
-        else:
-            field1 = field0
-
-        image_data[idx,0] = field1
-
-    return image_data
-
+    if torch.is_tensor(labels):
+        labels = labels.detach().cpu().numpy()
+    
+    num_modes = labels.shape[0]
+    num_wl = labels.shape[1]
+    
+    fig, axes = plt.subplots(num_modes, num_wl, figsize=(num_wl*3, num_modes*3))
+    
+    if num_modes == 1 and num_wl == 1:
+        axes = np.array([[axes]])
+    elif num_modes == 1:
+        axes = axes.reshape(1, -1)
+    elif num_wl == 1:
+        axes = axes.reshape(-1, 1)
+    
+    for mode_idx in range(num_modes):
+        for wl_idx in range(num_wl):
+            label_data = labels[mode_idx, wl_idx]
+            
+            im = axes[mode_idx, wl_idx].imshow(label_data, 
+                                             cmap='plasma', 
+                                             vmin=0, vmax=1,
+                                             interpolation='bilinear')
+            axes[mode_idx, wl_idx].axis('off')
+    
+    plt.subplots_adjust(wspace=0, hspace=0)
+    
+    if save_path is not None and isinstance(save_path, str):
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+        print(f"✓ 原版标签图像已保存到: {save_path}")
+    
+    plt.show()

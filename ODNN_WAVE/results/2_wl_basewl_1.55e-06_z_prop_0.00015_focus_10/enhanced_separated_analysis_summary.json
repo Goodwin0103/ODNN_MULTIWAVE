@@ -1,20 +1,20 @@
 {
   "analysis_type": "separated_cross_matrix_snr_enhanced",
-  "timestamp": "2025-09-22T22:16:47",
+  "timestamp": "2025-09-23T13:45:42",
   "total_configurations": 30,
   "enhanced_wavelength_analysis": true,
   "cross_matrix_analysis": {
     "best_configuration": {
       "config": "L5_M3_1310nm",
-      "focus_concentration": 0.9055262072647615,
-      "total_intensity": 82.61903945356607,
-      "max_intensity": 74.81370544433594
+      "focus_concentration": 0.8976750982026138,
+      "total_intensity": 84.67022805660963,
+      "max_intensity": 76.00635528564453
     },
     "statistics": {
-      "mean": 0.4223931657862724,
-      "max": 0.9055262072647615,
-      "min": 0.041333567772759275,
-      "std": 0.271606621230074,
+      "mean": 0.4219242499091259,
+      "max": 0.8976750982026138,
+      "min": 0.04141220284044296,
+      "std": 0.2709776816637967,
       "count": 30
     }
   },
