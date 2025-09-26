@@ -1,0 +1,211 @@
+{
+  "metadata": {
+    "timestamp": "20250926_001914",
+    "simulator_version": "Enhanced Simulator v2.0",
+    "config": {
+      "layer_size": 300,
+      "pixel_size": 1e-06,
+      "wavelengths": [
+        1.55e-06
+      ],
+      "num_modes": 3,
+      "z_layers": 4e-05,
+      "z_prop": 0.00015
+    },
+    "detection_regions": {
+      "num_regions": 3,
+      "regions": [
+        [
+          143,
+          157,
+          83,
+          97
+        ],
+        [
+          143,
+          157,
+          143,
+          157
+        ],
+        [
+          143,
+          157,
+          203,
+          217
+        ]
+      ]
+    }
+  },
+  "simulation_history": [
+    {
+      "timestamp": "2025-09-26T00:14:45.893012",
+      "mode_idx": 0,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.344249427318573,
+        "peak_intensity": 1.0,
+        "total_intensity": 845.1806030273438
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:14:46.676033",
+      "mode_idx": 1,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.47624507546424866,
+        "peak_intensity": 1.0,
+        "total_intensity": 391.1408996582031
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:14:47.590803",
+      "mode_idx": 2,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.30755487084388733,
+        "peak_intensity": 1.0,
+        "total_intensity": 1404.6832275390625
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:15:24.891282",
+      "mode_idx": 0,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.24127504229545593,
+        "peak_intensity": 1.0,
+        "total_intensity": 1744.14892578125
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:15:25.935312",
+      "mode_idx": 1,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.4410066306591034,
+        "peak_intensity": 1.0,
+        "total_intensity": 252.8160400390625
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:15:26.796686",
+      "mode_idx": 2,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.1601153314113617,
+        "peak_intensity": 1.0,
+        "total_intensity": 353.0050048828125
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:16:11.816229",
+      "mode_idx": 0,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.16991817951202393,
+        "peak_intensity": 1.0,
+        "total_intensity": 1394.67236328125
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:16:13.002012",
+      "mode_idx": 1,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.39617371559143066,
+        "peak_intensity": 1.0,
+        "total_intensity": 226.7610321044922
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:16:13.867692",
+      "mode_idx": 2,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.10956940799951553,
+        "peak_intensity": 1.0,
+        "total_intensity": 226.2386016845703
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:17:05.492307",
+      "mode_idx": 0,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.1678537130355835,
+        "peak_intensity": 1.0,
+        "total_intensity": 1789.5135498046875
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:17:06.342139",
+      "mode_idx": 1,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.36021608114242554,
+        "peak_intensity": 1.0,
+        "total_intensity": 203.6713409423828
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:17:07.225144",
+      "mode_idx": 2,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.08199615031480789,
+        "peak_intensity": 1.0,
+        "total_intensity": 208.22169494628906
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:18:05.955564",
+      "mode_idx": 0,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.1021297425031662,
+        "peak_intensity": 1.0,
+        "total_intensity": 586.1553955078125
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:18:06.863867",
+      "mode_idx": 1,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.3396020829677582,
+        "peak_intensity": 1.0,
+        "total_intensity": 217.99949645996094
+      }
+    },
+    {
+      "timestamp": "2025-09-26T00:18:07.998286",
+      "mode_idx": 2,
+      "wl_idx": 0,
+      "wavelength": 1.55e-06,
+      "performance": {
+        "focus_ratio": 0.08242123574018478,
+        "peak_intensity": 1.0,
+        "total_intensity": 246.89100646972656
+      }
+    }
+  ],
+  "results_summary": {
+    "total_evaluations": 15,
+    "average_focus_ratio": 0.2520217791199684,
+    "average_peak_intensity": 1.0
+  }
+}

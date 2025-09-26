@@ -1,0 +1,41 @@
+{
+  "overall_statistics": {
+    "total_simulations": 15,
+    "avg_focus_ratio": 0.2520217791199684,
+    "std_focus_ratio": 0.13179737803364028,
+    "max_focus_ratio": 0.47624507546424866,
+    "min_focus_ratio": 0.08199615031480789,
+    "avg_peak_intensity": 1.0,
+    "avg_total_intensity": 672.7399454752605
+  },
+  "mode_performance": {
+    "mode_0": {
+      "avg_focus_ratio": 0.2050852209329605,
+      "std_focus_ratio": 0.08233968184357872,
+      "num_simulations": 5
+    },
+    "mode_1": {
+      "avg_focus_ratio": 0.4026487171649933,
+      "std_focus_ratio": 0.05040850287666821,
+      "num_simulations": 5
+    },
+    "mode_2": {
+      "avg_focus_ratio": 0.14833139926195144,
+      "std_focus_ratio": 0.08454345845123695,
+      "num_simulations": 5
+    }
+  },
+  "wavelength_performance": {
+    "wavelength_0": {
+      "avg_focus_ratio": 0.2520217791199684,
+      "std_focus_ratio": 0.13179737803364028,
+      "num_simulations": 15
+    }
+  },
+  "detection_regions_info": {
+    "num_regions": 3,
+    "regions_defined": true,
+    "labels_available": false
+  },
+  "timestamp": "2025-09-26T00:19:16.678383"
+}
