@@ -1,5 +1,6 @@
 # label_utils.py - 完整修复版本
 
+from matplotlib import patches
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -515,3 +516,217 @@ def save_individual_3d_clean_images(labels, base_save_path):
         plt.close(fig)
     
     print(f"✅ 完成保存 {num_channels} 个3D纯净图像")
+
+def visualize_labels_and_detection_regions(labels, evaluation_regions, wavelengths, 
+                                         config, save_path=None, show_details=True):
+    """
+    综合可视化：同时显示标签位置和检测区域
+    
+    参数:
+        labels: 标签数据 [modes, wavelengths, H, W]
+        evaluation_regions: 检测区域列表 [(x_start, x_end, y_start, y_end), ...]
+        wavelengths: 波长列表
+        config: 配置对象
+        save_path: 保存路径
+        show_details: 是否显示详细信息
+    """
+    if torch.is_tensor(labels):
+        labels = labels.detach().cpu().numpy()
+    
+    num_modes = labels.shape[0]
+    num_wl = labels.shape[1]
+    
+    print(f"🎯 创建标签-检测区域综合可视化")
+    print(f"   模式数: {num_modes}, 波长数: {num_wl}")
+    print(f"   检测区域数: {len(evaluation_regions)}")
+    
+    # 创建大图布局：上半部分显示标签，下半部分显示检测区域
+    fig = plt.figure(figsize=(num_wl*4, num_modes*6), facecolor='black')
+    
+    # 创建网格布局
+    gs = fig.add_gridspec(3, num_wl, height_ratios=[2, 2, 1], hspace=0.3, wspace=0.1)
+    
+    # 第一行：标签可视化
+    for wl_idx in range(num_wl):
+        for mode_idx in range(num_modes):
+            # 计算子图位置
+            if num_modes <= 2:
+                ax = fig.add_subplot(gs[mode_idx, wl_idx], facecolor='black')
+            else:
+                # 多模式情况，压缩显示
+                row = 0 if mode_idx < num_modes//2 else 1
+                ax = fig.add_subplot(gs[row, wl_idx], facecolor='black')
+            
+            label_data = labels[mode_idx, wl_idx]
+            
+            # 显示标签热图
+            im = ax.imshow(label_data, cmap='hot', vmin=0, vmax=1, 
+                          interpolation='bilinear', alpha=0.8)
+            
+            # 叠加检测区域框
+            region_idx = wl_idx * num_modes + mode_idx
+            if region_idx < len(evaluation_regions):
+                x_start, x_end, y_start, y_end = evaluation_regions[region_idx]
+                
+                # 绘制检测区域边框
+                rect = patches.Rectangle((x_start, y_start), 
+                                       x_end - x_start, y_end - y_start,
+                                       linewidth=2, edgecolor='cyan', 
+                                       facecolor='none', alpha=0.8)
+                ax.add_patch(rect)
+                
+                # 标记区域中心
+                center_x = (x_start + x_end) / 2
+                center_y = (y_start + y_end) / 2
+                ax.plot(center_x, center_y, 'o', color='white', 
+                       markersize=8, markeredgecolor='cyan', markeredgewidth=2)
+            
+            # 添加标识
+            wl_nm = int(wavelengths[wl_idx] * 1e9) if wl_idx < len(wavelengths) else wl_idx+1
+            ax.text(0.02, 0.98, f'M{mode_idx+1}', 
+                   transform=ax.transAxes, color='white', 
+                   fontsize=12, fontweight='bold', verticalalignment='top')
+            
+            if mode_idx == 0:
+                ax.text(0.5, 0.98, f'λ={wl_nm}nm', 
+                       transform=ax.transAxes, color='yellow', 
+                       fontsize=10, horizontalalignment='center', 
+                       verticalalignment='top')
+            
+            ax.axis('off')
+    
+    # 第三行：检测区域布局图
+    ax_layout = fig.add_subplot(gs[2, :], facecolor='black')
+    
+    # 创建检测区域布局图
+    layout_image = np.zeros((config.layer_size, config.layer_size))
+    
+    # 为每个检测区域分配颜色
+    colors = plt.cm.Set3(np.linspace(0, 1, len(evaluation_regions)))
+    
+    for i, (x_start, x_end, y_start, y_end) in enumerate(evaluation_regions):
+        layout_image[y_start:y_end, x_start:x_end] = i + 1
+        
+        # 计算区域信息
+        wl_idx = i // num_modes
+        mode_idx = i % num_modes
+        center_x = (x_start + x_end) / 2
+        center_y = (y_start + y_end) / 2
+        
+        # 添加区域标签
+        wl_nm = int(wavelengths[wl_idx] * 1e9) if wl_idx < len(wavelengths) else wl_idx+1
+        label_text = f'{wl_nm}nm\nM{mode_idx+1}'
+        
+        ax_layout.text(center_x, center_y, label_text, 
+                      ha='center', va='center', 
+                      fontsize=8, fontweight='bold', color='white',
+                      bbox=dict(boxstyle="round,pad=0.3", 
+                               facecolor=colors[i], alpha=0.7))
+    
+    # 显示布局图
+    ax_layout.imshow(layout_image, cmap='Set3', vmin=0, vmax=len(evaluation_regions))
+    ax_layout.set_title('检测区域布局图', color='white', fontsize=14, fontweight='bold')
+    ax_layout.axis('off')
+    
+    # 添加图例和说明
+    if show_details:
+        info_text = f"配置信息:\n"
+        info_text += f"• 图像尺寸: {config.layer_size}×{config.layer_size}\n"
+        info_text += f"• 检测区域大小: {config.detectsize}×{config.detectsize}\n"
+        info_text += f"• 焦点半径: {config.focus_radius}\n"
+        info_text += f"• 总检测区域: {len(evaluation_regions)}个"
+        
+        fig.text(0.02, 0.02, info_text, color='white', fontsize=10,
+                verticalalignment='bottom', 
+                bbox=dict(boxstyle="round,pad=0.5", facecolor='gray', alpha=0.3))
+    
+    # 保存图像
+    if save_path is not None:
+        try:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight', 
+                       pad_inches=0.1, facecolor='black', edgecolor='none')
+            print(f"✅ 综合可视化图像已保存: {save_path}")
+        except Exception as e:
+            print(f"⚠️ 保存失败: {e}")
+    
+    plt.show()
+
+def create_detection_regions_overlay(labels, evaluation_regions, wavelengths, 
+                                   save_path=None):
+    """
+    创建标签与检测区域的叠加显示
+    """
+    if torch.is_tensor(labels):
+        labels = labels.detach().cpu().numpy()
+    
+    num_modes, num_wl = labels.shape[0], labels.shape[1]
+    
+    # 创建叠加图像
+    fig, axes = plt.subplots(num_modes, num_wl, 
+                            figsize=(num_wl*4, num_modes*4), 
+                            facecolor='black')
+    
+    if num_modes == 1 and num_wl == 1:
+        axes = np.array([[axes]])
+    elif num_modes == 1:
+        axes = axes.reshape(1, -1)
+    elif num_wl == 1:
+        axes = axes.reshape(-1, 1)
+    
+    for mode_idx in range(num_modes):
+        for wl_idx in range(num_wl):
+            ax = axes[mode_idx, wl_idx]
+            ax.set_facecolor('black')
+            
+            # 显示标签
+            label_data = labels[mode_idx, wl_idx]
+            im = ax.imshow(label_data, cmap='hot', vmin=0, vmax=1, alpha=0.7)
+            
+            # 叠加检测区域
+            region_idx = wl_idx * num_modes + mode_idx
+            if region_idx < len(evaluation_regions):
+                x_start, x_end, y_start, y_end = evaluation_regions[region_idx]
+                
+                # 绘制检测区域边框
+                rect = patches.Rectangle((x_start, y_start), 
+                                       x_end - x_start, y_end - y_start,
+                                       linewidth=3, edgecolor='cyan', 
+                                       facecolor='none', alpha=0.9)
+                ax.add_patch(rect)
+                
+                # 添加区域信息
+                center_x = (x_start + x_end) / 2
+                center_y = (y_start + y_end) / 2
+                
+                # 标记中心点
+                ax.plot(center_x, center_y, '+', color='white', 
+                       markersize=15, markeredgewidth=3)
+                
+                # 显示坐标信息
+                coord_text = f'({center_x:.0f},{center_y:.0f})'
+                ax.text(center_x, y_end + 5, coord_text, 
+                       ha='center', va='bottom', color='cyan', 
+                       fontsize=8, fontweight='bold')
+            
+            # 添加标识
+            wl_nm = int(wavelengths[wl_idx] * 1e9) if wl_idx < len(wavelengths) else wl_idx+1
+            ax.text(0.02, 0.98, f'模式 {mode_idx+1}', 
+                   transform=ax.transAxes, color='white', 
+                   fontsize=12, fontweight='bold', verticalalignment='top')
+            
+            if mode_idx == 0:
+                ax.text(0.5, 0.98, f'波长 {wl_nm}nm', 
+                       transform=ax.transAxes, color='yellow', 
+                       fontsize=10, horizontalalignment='center', 
+                       verticalalignment='top')
+            
+            ax.axis('off')
+    
+    plt.tight_layout()
+    
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight',
+                   facecolor='black', edgecolor='none')
+        print(f"✅ 叠加图像已保存: {save_path}")
+    
+    plt.show()
