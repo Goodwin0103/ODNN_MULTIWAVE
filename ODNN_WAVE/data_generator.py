@@ -133,7 +133,6 @@ class MultiModeMultiWavelengthDataGenerator:
             
             return labels
         
-        # 🔧 多波长情况保持原有逻辑
         region_idx = 0
         for wl_idx in range(len(self.config.wavelengths)):    # 区域创建的外层循环
             for mode_idx in range(self.config.num_modes):     # 区域创建的内层循环
@@ -151,8 +150,6 @@ class MultiModeMultiWavelengthDataGenerator:
                     sigma = self.config.focus_radius / 3
                     gaussian = torch.exp(-distance**2 / (2 * sigma**2))
                     
-                    # 🔧 关键修复：标签索引要与区域创建顺序对应
-                    # 区域按 (wl_idx, mode_idx) 创建，标签按 [mode_idx, wl_idx] 存储
                     labels[mode_idx, wl_idx] = gaussian / gaussian.max()
                     
                     print(f"  区域{region_idx}: wl{wl_idx+1}_mode{mode_idx+1} -> 标签[{mode_idx}, {wl_idx}], 中心({center_x:.1f}, {center_y:.1f})")
