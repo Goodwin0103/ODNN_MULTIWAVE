@@ -9,10 +9,7 @@ import os
 from simulator import Simulator
 # 修改导入语句
 from label_utils import (
-    create_evaluation_regions_by_wavelength,  # 新函数
-    create_evaluation_regions_mode_wavelength,  # 兼容性函数
-    evaluate_output, 
-    evaluate_all_regions
+    create_evaluation_regions_by_wavelength  # 新函数
 )
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -170,6 +167,7 @@ class Trainer:
                         for mode_idx in range(min(self.config.num_modes, len(self.evaluation_regions))):
                             region = self.evaluation_regions[mode_idx]
                             xs, xe, ys, ye = region
+                            xs, xe, ys, ye = int(xs), int(xe), int(ys), int(ye)
                             region_sum = chan[:, ys:ye, xs:xe].sum(dim=(-2, -1))
                             energies.append(region_sum)
                             
@@ -182,6 +180,7 @@ class Trainer:
                         for region_idx in range(start_idx, min(end_idx, len(self.evaluation_regions))):
                             region = self.evaluation_regions[region_idx]
                             xs, xe, ys, ye = region
+                            xs, xe, ys, ye = int(xs), int(xe), int(ys), int(ye)
                             region_sum = chan[:, ys:ye, xs:xe].sum(dim=(-2, -1))
                             energies.append(region_sum)
                     

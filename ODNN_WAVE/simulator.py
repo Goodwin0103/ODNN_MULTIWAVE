@@ -11,8 +11,6 @@ import os
 import glob
 from datetime import datetime
 import json
-from pathlib import Path
-import pandas as pd
 
 class Simulator:
     """光场传播仿真器"""
@@ -59,14 +57,14 @@ class Simulator:
         else:
             field = field.to(torch.complex64)
         
-        print(f"预处理前场的形状: {field.shape}")
+        # print(f"预处理前场的形状: {field.shape}")
         
         # 计算需要的填充
         current_size = field.shape[-1]  # 假设最后两个维度是空间维度且相等
         target_size = self.config.layer_size
         
         if current_size >= target_size:
-            print(f"场尺寸 {current_size} >= 目标尺寸 {target_size}，不需要填充")
+            # print(f"场尺寸 {current_size} >= 目标尺寸 {target_size}，不需要填充")
             return field
         
         pad_size = (target_size - current_size) // 2
@@ -76,8 +74,8 @@ class Simulator:
         padding = (pad_size, pad_size + pad_remainder,  # 最后一个维度 (width)
                    pad_size, pad_size + pad_remainder)  # 倒数第二个维度 (height)
         
-        print(f"填充参数: {padding}")
-        print(f"填充前形状: {field.shape}")
+        # print(f"填充参数: {padding}")
+        # print(f"填充前形状: {field.shape}")
         
         try:
             padded_field = torch.nn.functional.pad(field, padding, mode='constant', value=0)
@@ -262,114 +260,6 @@ class Simulator:
             print(f"✅ Data saved: {filename} (替代 .mat 格式)")
         except Exception as e:
             print(f"❌ 保存失败 {filename}: {e}")
-        
-    def _evaluate_propagation_result(self, field, mode_idx, wl_idx):
-        """
-        评估传播结果的聚焦质量
-        
-        参数:
-            field: 输出光场 (torch.Tensor 或 numpy.ndarray)
-            mode_idx: 模式索引
-            wl_idx: 波长索引
-        
-        返回:
-            dict: 包含聚焦质量指标的字典
-        """
-        try:
-            # 转换为numpy数组
-            if isinstance(field, torch.Tensor):
-                field_np = field.detach().cpu().numpy()
-            else:
-                field_np = field
-            
-            # 计算强度
-            if np.iscomplexobj(field_np):
-                intensity_np = np.abs(field_np) ** 2
-            else:
-                intensity_np = field_np ** 2
-            
-            # 确保是2D数组
-            if intensity_np.ndim > 2:
-                intensity_np = intensity_np.squeeze()
-            
-            if intensity_np.ndim != 2:
-                print(f"⚠ 强度数组维度异常: {intensity_np.shape}")
-                return self._create_default_eval_result()
-            peak_pos = np.unravel_index(np.argmax(intensity_np), intensity_np.shape)
-            print(f"🔍 仿真结果调试:")
-            print(f"  MODE {mode_idx+1}, WL {wl_idx+1}: 峰值位置 {peak_pos}")
-            print(f"  期望行: {mode_idx+1}, 实际峰值行: {peak_pos[0]}")           
-                        # 归一化强度
-            if np.max(intensity_np) > 0:
-                intensity_np = intensity_np / np.max(intensity_np)
-        
-            # 计算质心位置
-            y_coords, x_coords = np.mgrid[0:intensity_np.shape[0], 0:intensity_np.shape[1]]
-            total_intensity = np.sum(intensity_np)
-            
-            if total_intensity > 0:
-                centroid_y = np.sum(y_coords * intensity_np) / total_intensity
-                centroid_x = np.sum(x_coords * intensity_np) / total_intensity
-            else:
-                centroid_y = intensity_np.shape[0] // 2
-                centroid_x = intensity_np.shape[1] // 2
-            
-            # 找到峰值位置
-            peak_pos = np.unravel_index(np.argmax(intensity_np), intensity_np.shape)
-            peak_intensity = np.max(intensity_np)
-            
-            # 计算聚焦比例（在中心区域的能量占比）
-            center_y, center_x = intensity_np.shape[0] // 2, intensity_np.shape[1] // 2
-            
-            # 修复：确保 region_mask 是数组而不是元组
-            try:
-                # 定义中心区域大小（例如总尺寸的1/4）
-                region_size = min(intensity_np.shape) // 4
-                y_start = max(0, center_y - region_size // 2)
-                y_end = min(intensity_np.shape[0], center_y + region_size // 2)
-                x_start = max(0, center_x - region_size // 2)
-                x_end = min(intensity_np.shape[1], center_x + region_size // 2)
-                
-                # 创建区域掩码
-                region_mask = np.zeros_like(intensity_np, dtype=bool)
-                region_mask[y_start:y_end, x_start:x_end] = True
-                
-                # 确保 region_mask 的形状与 intensity_np 一致
-                if region_mask.shape != intensity_np.shape:
-                    print(f"⚠ 形状不匹配: region_mask {region_mask.shape} vs intensity {intensity_np.shape}")
-                    # 重新创建正确大小的掩码
-                    region_mask = np.zeros(intensity_np.shape, dtype=bool)
-                    region_mask[y_start:y_end, x_start:x_end] = True
-                
-                # 计算聚焦比例
-                if total_intensity > 0:
-                    focus_ratio = np.sum(intensity_np[region_mask]) / total_intensity
-                else:
-                    focus_ratio = 0.0
-                    
-            except Exception as e:
-                print(f"⚠ 计算聚焦比例时出错: {e}")
-                focus_ratio = 0.0
-            
-            # 创建评估结果
-            eval_result = {
-                'centroid': (float(centroid_y), float(centroid_x)),
-                'peak_position': peak_pos,
-                'focus_ratio': float(focus_ratio),
-                'peak_intensity': float(peak_intensity),
-                'total_intensity': float(total_intensity),
-                'mode_idx': mode_idx,
-                'wavelength_idx': wl_idx,
-                'correct': True,  # 默认为True，表示聚焦成功
-                'expected_region': mode_idx * len(self.config.wavelengths) + wl_idx,  # 期望区域
-                'max_region': mode_idx * len(self.config.wavelengths) + wl_idx  # 最大强度区域
-            }
-            
-            return eval_result
-            
-        except Exception as e:
-            print(f"⚠ 评估传播结果时出错: {e}")
-            return self._create_default_eval_result()
 
     def _create_default_eval_result(self):
         """创建默认的评估结果"""
@@ -392,16 +282,16 @@ class Simulator:
         执行光场传播仿真 - 添加坐标系调试
         """
         print("开始光场传播仿真...")
-        print("🔍 仿真参数调试:")
-        print(f"  输入场形状: {input_field.shape}")
+        # print("🔍 仿真参数调试:")
+        # print(f"  输入场形状: {input_field.shape}")
         
         # 确保输入场是 PyTorch 张量
         if isinstance(input_field, np.ndarray):
             input_field = torch.from_numpy(input_field.copy())
-            print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
+            # print(f"✓ 将 numpy 数组转换为 PyTorch 张量")
         elif not isinstance(input_field, torch.Tensor):
             input_field = torch.tensor(input_field)
-            print(f"✓ 将输入转换为 PyTorch 张量")
+            # print(f"✓ 将输入转换为 PyTorch 张量")
         
         # 确保是复数类型
         if not input_field.dtype.is_complex:
@@ -409,13 +299,11 @@ class Simulator:
                 input_field = input_field.to(torch.complex64)
             else:
                 input_field = input_field.to(torch.float32).to(torch.complex64)
-        
-        print(f"输入字段维度: {input_field.ndim}D, 形状: {input_field.shape}")
-        
+                
         if input_field.ndim == 4:  # [num_modes, num_wavelengths, H, W]
             num_modes, num_wavelengths = input_field.shape[:2]
-            print(f"检测到4D输入 [mode, wavelength, height, width]")
-            print(f"模式数: {num_modes}, 波长数: {num_wavelengths}")
+            # print(f"检测到4D输入 [mode, wavelength, height, width]")
+            # print(f"模式数: {num_modes}, 波长数: {num_wavelengths}")
             
             evaluation_results = []
             
@@ -426,7 +314,7 @@ class Simulator:
                 
                 # 🔧 添加输入场分析
                 mode_field = input_field[mode_idx]  # [num_wavelengths, H, W]
-                print(f"  模式{mode_idx+1}输入场形状: {mode_field.shape}")
+                # print(f"  模式{mode_idx+1}输入场形状: {mode_field.shape}")
                 
                 # 分析输入场的能量分布
                 for wl_idx in range(num_wavelengths):
@@ -444,202 +332,20 @@ class Simulator:
                 # 使用通用相位掩膜或模式特定掩膜
                 if mode_specific_masks and mode_idx < len(mode_specific_masks):
                     current_masks = mode_specific_masks[mode_idx]
-                    print(f"  使用模式{mode_idx+1}专用相位掩膜")
+                    # print(f"  使用模式{mode_idx+1}专用相位掩膜")
                 else:
                     current_masks = phase_masks
-                    print(f"  使用通用相位掩膜")
+                    # print(f"  使用通用相位掩膜")
                 
                 # 仿真该模式
                 mode_results = self._simulate_single_mode(
                     current_masks, mode_field, f"_mode{mode_idx+1}"
                 )
                 
-                # 评估结果
-                mode_evaluations = []
-                for wl_idx in range(num_wavelengths):
-                    if f'wl_{wl_idx}' in mode_results:
-                        field = mode_results[f'wl_{wl_idx}']['field']
-                        
-                        # 🔧 添加输出场分析
-                        if isinstance(field, torch.Tensor):
-                            field_np = field.detach().cpu().numpy()
-                        else:
-                            field_np = field
-                        
-                        output_intensity = np.abs(field_np) ** 2
-                        output_peak_pos = np.unravel_index(np.argmax(output_intensity), output_intensity.shape)
-                        wl_nm = self.config.wavelengths[wl_idx] * 1e9
-                        
-                        print(f"🔍 仿真输出分析:")
-                        print(f"  MODE {mode_idx+1}, WL{wl_idx+1} ({wl_nm:.0f}nm):")
-                        print(f"    输出峰值位置: {output_peak_pos}")
-                        print(f"    期望行位置: ~{40 + mode_idx * 60} (MODE {mode_idx+1})")
-                        print(f"    实际行位置: {output_peak_pos[0]}")
-                        
-                        # 判断是否聚焦到正确位置
-                        expected_y_center = 40 + mode_idx * 60  # 基于调试输出的计算
-                        y_tolerance = 30  # 允许的误差范围
-                        
-                        if abs(output_peak_pos[0] - expected_y_center) <= y_tolerance:
-                            print(f"    ✅ 聚焦位置正确")
-                        else:
-                            print(f"    ❌ 聚焦位置错误！")
-                            print(f"    可能原因: 模式索引映射问题")
-                        
-                        eval_result = self._evaluate_propagation_result(field, mode_idx, wl_idx)
-                        mode_evaluations.append(eval_result)
-                
-                evaluation_results.extend(mode_evaluations)
-                print(f"✓ 模式{mode_idx+1}仿真完成，生成{len(mode_evaluations)}个评估结果")
             
             print(f"\n✅ 所有模式仿真完成，总计{len(evaluation_results)}个评估结果")
             return evaluation_results
 
-    def generate_mode_specific_masks(self, base_masks, num_modes):
-        """
-        为每个模式生成专用相位掩膜（可选功能）
-        
-        参数:
-            base_masks: 基础相位掩码
-            num_modes: 模式数量
-        
-        返回:
-            list: 每个模式的专用掩码
-        """
-        print(f"为 {num_modes} 个模式生成专用相位掩膜...")
-        
-        mode_specific_masks = []
-        
-        for mode_idx in range(num_modes):
-            # 这里可以实现更复杂的模式特定掩码生成逻辑
-            # 目前简单地使用相同的基础掩码
-            mode_masks = []
-            
-            for layer_masks in base_masks:
-                mode_layer_masks = []
-                for wl_mask in layer_masks:
-                    # 可以在这里添加模式特定的相位调制
-                    # 例如：添加不同的相位偏移
-                    phase_offset = mode_idx * np.pi / num_modes
-                    
-                    if isinstance(wl_mask, np.ndarray):
-                        modified_mask = wl_mask + phase_offset
-                    else:
-                        modified_mask = wl_mask + phase_offset
-                    
-                    mode_layer_masks.append(modified_mask)
-                mode_masks.append(mode_layer_masks)
-            
-            mode_specific_masks.append(mode_masks)
-        
-        print(f"✓ 生成了 {len(mode_specific_masks)} 个模式的专用掩膜")
-        return mode_specific_masks
-    
-    def visualize_propagation_results(self, save_dir, mode_suffix=""):
-        """
-        Visualize propagation results
-        
-        参数:
-            save_dir: 保存目录
-            mode_suffix: 模式后缀
-        """
-        import matplotlib.pyplot as plt
-        from matplotlib.colors import LogNorm
-        
-        print("Generating propagation visualization images...")
-        
-        # 查找保存的仿真结果文件
-        pattern = f"MC_single_*{mode_suffix}_*.npy"
-        result_files = glob.glob(os.path.join(save_dir, pattern))
-        
-        if not result_files:
-            print(f"⚠ 未找到仿真结果文件: {pattern}")
-            return
-        
-        # 按波长组织文件
-        wavelength_files = {}
-        for file_path in result_files:
-            filename = os.path.basename(file_path)
-            # 提取波长信息
-            for wl in self.config.wavelengths:
-                wl_nm = int(wl * 1e9)
-                if f"{wl_nm}nm" in filename:
-                    if wl_nm not in wavelength_files:
-                        wavelength_files[wl_nm] = []
-                    wavelength_files[wl_nm].append(file_path)
-                    break
-        
-        if not wavelength_files:
-            print("⚠ 无法识别波长信息")
-            return
-        
-        # 为每个波长创建可视化
-        for wl_nm, files in wavelength_files.items():
-            if not files:
-                continue
-                
-            # 选择最新的文件
-            latest_file = max(files, key=os.path.getctime)
-            
-            try:
-                # 加载数据
-                try:
-                    data = np.load(latest_file, allow_pickle=True)
-                except ValueError:
-                    data = np.load(latest_file, allow_pickle=True)
-                
-                # 计算强度
-                if np.iscomplexobj(data):
-                    intensity = np.abs(data)**2
-                    phase = np.angle(data)
-                else:
-                    intensity = np.abs(data)
-                    phase = None
-                
-                # 确保是2D数据
-                if intensity.ndim > 2:
-                    intensity = np.sum(intensity, axis=tuple(range(intensity.ndim-2)))
-                    if phase is not None and phase.ndim > 2:
-                        phase = phase[..., 0, 0] if phase.ndim == 4 else phase[..., 0]
-                
-                intensity_flipped = np.flipud(intensity)
-                if phase is not None:
-                    phase_flipped = np.flipud(phase)
-                
-                # 创建图形
-                if phase is not None:
-                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-                else:
-                    fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
-                
-                # 绘制强度分布
-                im1 = ax1.imshow(intensity_flipped, cmap='hot', origin='lower')
-                ax1.set_title(f'Field Intensity Distribution - {wl_nm}nm{mode_suffix}')
-                ax1.set_xlabel('X (pixels)')
-                ax1.set_ylabel('Y (pixels)')
-                plt.colorbar(im1, ax=ax1, label='Intensity')
-                
-                # 绘制相位分布（如果有）
-                if phase is not None:
-                    im2 = ax2.imshow(phase_flipped, cmap='hsv', origin='lower', vmin=-np.pi, vmax=np.pi)
-                    ax2.set_title(f'Field Phase Distribution - {wl_nm}nm{mode_suffix}')
-                    ax2.set_xlabel('X (pixels)')
-                    ax2.set_ylabel('Y (pixels)')
-                    plt.colorbar(im2, ax=ax2, label='Phase (radians)')
-                
-                plt.tight_layout()
-                
-                # 保存图像
-                save_path = os.path.join(save_dir, f'propagation_result_{wl_nm}nm{mode_suffix}.png')
-                plt.savefig(save_path, dpi=300, bbox_inches='tight')
-                plt.show()
-                
-                print(f"✅ 保存传播结果图: {save_path}")
-                
-            except Exception as e:
-                print(f"❌ 处理文件 {latest_file} 时出错: {e}")
-                continue
-    
     def create_propagation_summary(self, save_dir):
         """
         Create summary figures for each model (by layers)
@@ -790,7 +496,7 @@ class Simulator:
                             intensity_flipped = intensity_flipped / np.max(intensity_flipped)
                         
                         # Display intensity distribution (Y-axis flipped)
-                        im = ax.imshow(intensity_flipped, cmap='hot', origin='lower', aspect='equal')
+                        im = ax.imshow(intensity_flipped, cmap='hot', origin='upper', aspect='equal')
                         ax.set_title(f'Mode {mode_idx+1} - {wl_nm}nm', fontsize=12)
                         
                         # Add colorbar
@@ -818,7 +524,7 @@ class Simulator:
                             bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
                         
                         successful_loads += 1
-                        print(f"    ✓ Loaded and displayed successfully")
+                        # print(f"    ✓ Loaded and displayed successfully")
                         
                     except Exception as e:
                         print(f"    ❌ Load failed: {e}")
@@ -892,7 +598,7 @@ class Simulator:
             intensity = np.abs(field)**2
             
             # 显示强度分布
-            im = ax.imshow(intensity, cmap='hot', origin='lower')
+            im = ax.imshow(intensity, cmap='hot', origin='upper')
             
             # 获取距离信息
             distance_um = step_data.get('distance_um', 0.0)
@@ -953,7 +659,7 @@ class Simulator:
             img_filepath = os.path.join(step_dir, img_filename)
             
             plt.figure(figsize=(6, 5))
-            plt.imshow(intensity, cmap='hot', origin='lower')
+            plt.imshow(intensity, cmap='hot', origin='upper')
             plt.colorbar()
             plt.title(f"{step_data['description']}\nDistance: {distance_um:.1f} μm")
             plt.xlabel('X (pixels)')
@@ -1336,31 +1042,29 @@ class Simulator:
                 if layer_idx < len(phase_masks) and wl_idx < len(phase_masks[layer_idx]):
                     phase_mask = phase_masks[layer_idx][wl_idx]
                     current_field = self._apply_phase_mask(current_field, phase_mask)
-                    print(f"    ✓ 应用相位掩码")
+                    # print(f"    ✓ 应用相位掩码")
                 
                 # 传播
                 if layer_idx < num_layers - 1:
                     # 传播到下一层
-                    print(f"    🚀 传播 {self.config.z_layers * 1e6:.1f} μm 到下一层")
                     current_field = self._angular_spectrum_propagate(
                         current_field, self.config.z_layers, wavelength
                     )
                 else:
                     # 最后一层传播到检测平面
-                    print(f"    🚀 最终传播 {self.config.z_prop * 1e6:.1f} μm 到检测平面")
                     current_field = self._angular_spectrum_propagate(
                         current_field, self.config.z_prop, wavelength
                     )
             
-            print("  → 结束")
+            # print("  → 结束")
             
             # 计算聚焦质量
             focus_quality = self._calculate_focus_quality(current_field, 0, wl_idx)
-            print(f"\n  聚焦质量{mode_suffix}:")
-            print(f"    质心位置: ({focus_quality['centroid_position'][0]:.1f}, {focus_quality['centroid_position'][1]:.1f})")
-            print(f"    峰值位置: {focus_quality['peak_position']}")
-            print(f"    聚焦比例: {focus_quality['focus_ratio']:.4f}")
-            print(f"    峰值强度: {focus_quality['peak_intensity']:.6f}")
+            # print(f"\n  聚焦质量{mode_suffix}:")
+            # print(f"    质心位置: ({focus_quality['centroid_position'][0]:.1f}, {focus_quality['centroid_position'][1]:.1f})")
+            # print(f"    峰值位置: {focus_quality['peak_position']}")
+            # print(f"    聚焦比例: {focus_quality['focus_ratio']:.4f}")
+            # print(f"    峰值强度: {focus_quality['peak_intensity']:.6f}")
             
             # 保存结果
             self._save_simulation_result(
@@ -1433,7 +1137,7 @@ class Simulator:
             intensity = np.abs(field)**2
             
             # 显示强度分布
-            im = ax.imshow(intensity, cmap='hot', origin='lower')
+            im = ax.imshow(intensity, cmap='hot', origin='upper')
             
             # 获取距离信息
             distance_um = step_data.get('distance_um', 0.0)
@@ -1562,7 +1266,7 @@ class Simulator:
             if save_clean:
                 # 保存纯净版本 - 无标题、无colorbar、无坐标轴
                 plt.figure(figsize=(8, 8))  # 正方形图像
-                plt.imshow(intensity, cmap='hot', origin='lower')
+                plt.imshow(intensity, cmap='hot', origin='upper')
                 plt.axis('off')  # 关闭坐标轴
                 
                 # 保存纯净图像
@@ -1577,7 +1281,7 @@ class Simulator:
             else:
                 # 保存带标注的版本（原有功能）
                 plt.figure(figsize=(8, 6))
-                im = plt.imshow(intensity, cmap='hot', origin='lower')
+                im = plt.imshow(intensity, cmap='hot', origin='upper')
                 plt.colorbar(im, label='Intensity')
                 
                 # 设置标题和标签

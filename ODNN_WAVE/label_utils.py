@@ -49,20 +49,9 @@ def create_single_wavelength_centered_regions(H, W, radius, detectsize, num_mode
     
     return evaluation_regions
 
-def create_evaluation_regions_mode_wavelength(H, W, radius, detectsize, offsets=None):
-    """
-    创建按模式-波长排列的评估区域（兼容旧版本）
-    这是为了保持与现有代码的兼容性
-    """
-    print("⚠️  使用兼容性函数 create_evaluation_regions_mode_wavelength")
-    print("   建议更新为 create_evaluation_regions_by_wavelength")
-    
-    # 调用新的按波长分列的函数
-    return create_evaluation_regions_by_wavelength(H, W, radius, detectsize, offsets)
-
 def create_evaluation_regions_by_wavelength(H, W, radius, detectsize, offsets=None, num_modes=3):
     """
-    修改版本：支持单波长和多波长的评估区域创建
+    修改版本：支持单波长、单模式多波长和多模式多波长的评估区域创建
     """
     # 从offsets判断波长数量
     if offsets is None:
@@ -70,11 +59,20 @@ def create_evaluation_regions_by_wavelength(H, W, radius, detectsize, offsets=No
     else:
         num_wavelengths = len(offsets)
     
-    # 🔧 单波长特殊处理
+    print(f"📊 评估区域创建参数:")
+    print(f"   图像尺寸: {H}x{W}")
+    print(f"   模式数: {num_modes}, 波长数: {num_wavelengths}")
+    print(f"   检测区域大小: {detectsize}x{detectsize}")
+    
+    # 🔧 单波长特殊处理（多模式单波长）
     if num_wavelengths == 1:
         return create_single_wavelength_centered_regions(H, W, radius, detectsize, num_modes)
     
-    # 多波长情况保持原有逻辑
+    # 🔧 单模式多波长特殊处理
+    if num_modes == 1:
+        return create_single_mode_multi_wavelength_regions(H, W, radius, detectsize, num_wavelengths, offsets)
+    
+    # 多波长多模式情况保持原有逻辑
     output_image = np.zeros((H, W))
     evaluation_regions = []
     
@@ -92,10 +90,8 @@ def create_evaluation_regions_by_wavelength(H, W, radius, detectsize, offsets=No
     # 行高度（按模式数量分）
     row_height = available_height // num_modes
     
-    print(f"创建按波长分列的评估区域:")
-    print(f"  图像尺寸: {H}x{W}")
+    print(f"多模式多波长布局:")
     print(f"  列宽度: {col_width}, 行高度: {row_height}")
-    print(f"  检测区域大小: {detectsize}x{detectsize}")
     
     # 按波长-模式顺序创建区域
     for wl_idx in range(num_wavelengths):      # 列索引（波长）
@@ -128,48 +124,6 @@ def create_evaluation_regions_by_wavelength(H, W, radius, detectsize, offsets=No
     
     print(f"✓ 创建了 {len(evaluation_regions)} 个评估区域")
     return evaluation_regions
-
-def evaluate_output(output, evaluation_regions):
-    """
-    评估输出在指定区域的能量
-    """
-    if torch.is_tensor(output):
-        output = output.detach().cpu().numpy()
-    
-    energies = []
-    for region in evaluation_regions:
-        x_start, x_end, y_start, y_end = region
-        region_energy = np.sum(output[y_start:y_end, x_start:x_end])
-        energies.append(region_energy)
-    
-    return np.array(energies)
-
-def evaluate_all_regions(outputs, evaluation_regions):
-    """
-    评估所有输出在所有区域的能量
-    outputs: [batch_size, channels, height, width] 或 [channels, height, width]
-    """
-    if torch.is_tensor(outputs):
-        outputs = outputs.detach().cpu().numpy()
-    
-    # 处理不同的输入维度
-    if outputs.ndim == 3:  # [channels, height, width]
-        outputs = outputs[np.newaxis, ...]  # 添加批次维度
-    
-    batch_size, channels, height, width = outputs.shape
-    num_regions = len(evaluation_regions)
-    
-    # 结果数组: [batch_size, channels, num_regions]
-    all_energies = np.zeros((batch_size, channels, num_regions))
-    
-    for b in range(batch_size):
-        for c in range(channels):
-            for r, region in enumerate(evaluation_regions):
-                x_start, x_end, y_start, y_end = region
-                region_energy = np.sum(outputs[b, c, y_start:y_end, x_start:x_end])
-                all_energies[b, c, r] = region_energy
-    
-    return all_energies
 
 def visualize_evaluation_regions(H, W, regions, title="评估区域分布"):
     """
@@ -204,35 +158,6 @@ def visualize_evaluation_regions(H, W, regions, title="评估区域分布"):
     
     plt.tight_layout()
     plt.show()
-
-def print_region_info(regions, wavelengths, num_modes):
-    """
-    打印区域信息
-    """
-    print(f"\n📊 评估区域信息:")
-    print(f"总区域数: {len(regions)}")
-    print(f"波长数: {len(wavelengths)}")
-    print(f"模式数: {num_modes}")
-    
-    if len(wavelengths) == 1:
-        print("单波长模式 - 垂直居中排列:")
-        for i, (x_start, x_end, y_start, y_end) in enumerate(regions):
-            center_x = (x_start + x_end) / 2
-            center_y = (y_start + y_end) / 2
-            print(f"  模式 {i+1}: 中心({center_x:.1f}, {center_y:.1f}), 区域({x_start}, {x_end}, {y_start}, {y_end})")
-    else:
-        print("多波长模式 - 按波长分列:")
-        region_idx = 0
-        for wl_idx, wl in enumerate(wavelengths):
-            wl_nm = int(wl * 1e9)
-            print(f"  波长 {wl_nm}nm:")
-            for mode_idx in range(num_modes):
-                if region_idx < len(regions):
-                    x_start, x_end, y_start, y_end = regions[region_idx]
-                    center_x = (x_start + x_end) / 2
-                    center_y = (y_start + y_end) / 2
-                    print(f"    模式 {mode_idx+1}: 中心({center_x:.1f}, {center_y:.1f}), 区域({x_start}, {x_end}, {y_start}, {y_end})")
-                    region_idx += 1
 
 def visualize_labels_by_wavelength(labels, wavelengths, save_path=None, show_colorbar=False, save_individual=False):
     """
@@ -517,140 +442,6 @@ def save_individual_3d_clean_images(labels, base_save_path):
     
     print(f"✅ 完成保存 {num_channels} 个3D纯净图像")
 
-def visualize_labels_and_detection_regions(labels, evaluation_regions, wavelengths, 
-                                         config, save_path=None, show_details=True):
-    """
-    综合可视化：同时显示标签位置和检测区域
-    
-    参数:
-        labels: 标签数据 [modes, wavelengths, H, W]
-        evaluation_regions: 检测区域列表 [(x_start, x_end, y_start, y_end), ...]
-        wavelengths: 波长列表
-        config: 配置对象
-        save_path: 保存路径
-        show_details: 是否显示详细信息
-    """
-    if torch.is_tensor(labels):
-        labels = labels.detach().cpu().numpy()
-    
-    num_modes = labels.shape[0]
-    num_wl = labels.shape[1]
-    
-    print(f"🎯 创建标签-检测区域综合可视化")
-    print(f"   模式数: {num_modes}, 波长数: {num_wl}")
-    print(f"   检测区域数: {len(evaluation_regions)}")
-    
-    # 创建大图布局：上半部分显示标签，下半部分显示检测区域
-    fig = plt.figure(figsize=(num_wl*4, num_modes*6), facecolor='black')
-    
-    # 创建网格布局
-    gs = fig.add_gridspec(3, num_wl, height_ratios=[2, 2, 1], hspace=0.3, wspace=0.1)
-    
-    # 第一行：标签可视化
-    for wl_idx in range(num_wl):
-        for mode_idx in range(num_modes):
-            # 计算子图位置
-            if num_modes <= 2:
-                ax = fig.add_subplot(gs[mode_idx, wl_idx], facecolor='black')
-            else:
-                # 多模式情况，压缩显示
-                row = 0 if mode_idx < num_modes//2 else 1
-                ax = fig.add_subplot(gs[row, wl_idx], facecolor='black')
-            
-            label_data = labels[mode_idx, wl_idx]
-            
-            # 显示标签热图
-            im = ax.imshow(label_data, cmap='hot', vmin=0, vmax=1, 
-                          interpolation='bilinear', alpha=0.8)
-            
-            # 叠加检测区域框
-            region_idx = wl_idx * num_modes + mode_idx
-            if region_idx < len(evaluation_regions):
-                x_start, x_end, y_start, y_end = evaluation_regions[region_idx]
-                
-                # 绘制检测区域边框
-                rect = patches.Rectangle((x_start, y_start), 
-                                       x_end - x_start, y_end - y_start,
-                                       linewidth=2, edgecolor='cyan', 
-                                       facecolor='none', alpha=0.8)
-                ax.add_patch(rect)
-                
-                # 标记区域中心
-                center_x = (x_start + x_end) / 2
-                center_y = (y_start + y_end) / 2
-                ax.plot(center_x, center_y, 'o', color='white', 
-                       markersize=8, markeredgecolor='cyan', markeredgewidth=2)
-            
-            # 添加标识
-            wl_nm = int(wavelengths[wl_idx] * 1e9) if wl_idx < len(wavelengths) else wl_idx+1
-            ax.text(0.02, 0.98, f'M{mode_idx+1}', 
-                   transform=ax.transAxes, color='white', 
-                   fontsize=12, fontweight='bold', verticalalignment='top')
-            
-            if mode_idx == 0:
-                ax.text(0.5, 0.98, f'λ={wl_nm}nm', 
-                       transform=ax.transAxes, color='yellow', 
-                       fontsize=10, horizontalalignment='center', 
-                       verticalalignment='top')
-            
-            ax.axis('off')
-    
-    # 第三行：检测区域布局图
-    ax_layout = fig.add_subplot(gs[2, :], facecolor='black')
-    
-    # 创建检测区域布局图
-    layout_image = np.zeros((config.layer_size, config.layer_size))
-    
-    # 为每个检测区域分配颜色
-    colors = plt.cm.Set3(np.linspace(0, 1, len(evaluation_regions)))
-    
-    for i, (x_start, x_end, y_start, y_end) in enumerate(evaluation_regions):
-        layout_image[y_start:y_end, x_start:x_end] = i + 1
-        
-        # 计算区域信息
-        wl_idx = i // num_modes
-        mode_idx = i % num_modes
-        center_x = (x_start + x_end) / 2
-        center_y = (y_start + y_end) / 2
-        
-        # 添加区域标签
-        wl_nm = int(wavelengths[wl_idx] * 1e9) if wl_idx < len(wavelengths) else wl_idx+1
-        label_text = f'{wl_nm}nm\nM{mode_idx+1}'
-        
-        ax_layout.text(center_x, center_y, label_text, 
-                      ha='center', va='center', 
-                      fontsize=8, fontweight='bold', color='white',
-                      bbox=dict(boxstyle="round,pad=0.3", 
-                               facecolor=colors[i], alpha=0.7))
-    
-    # 显示布局图
-    ax_layout.imshow(layout_image, cmap='Set3', vmin=0, vmax=len(evaluation_regions))
-    ax_layout.set_title('检测区域布局图', color='white', fontsize=14, fontweight='bold')
-    ax_layout.axis('off')
-    
-    # 添加图例和说明
-    if show_details:
-        info_text = f"配置信息:\n"
-        info_text += f"• 图像尺寸: {config.layer_size}×{config.layer_size}\n"
-        info_text += f"• 检测区域大小: {config.detectsize}×{config.detectsize}\n"
-        info_text += f"• 焦点半径: {config.focus_radius}\n"
-        info_text += f"• 总检测区域: {len(evaluation_regions)}个"
-        
-        fig.text(0.02, 0.02, info_text, color='white', fontsize=10,
-                verticalalignment='bottom', 
-                bbox=dict(boxstyle="round,pad=0.5", facecolor='gray', alpha=0.3))
-    
-    # 保存图像
-    if save_path is not None:
-        try:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight', 
-                       pad_inches=0.1, facecolor='black', edgecolor='none')
-            print(f"✅ 综合可视化图像已保存: {save_path}")
-        except Exception as e:
-            print(f"⚠️ 保存失败: {e}")
-    
-    plt.show()
-
 def create_detection_regions_overlay(labels, evaluation_regions, wavelengths, 
                                    save_path=None):
     """
@@ -730,3 +521,55 @@ def create_detection_regions_overlay(labels, evaluation_regions, wavelengths,
         print(f"✅ 叠加图像已保存: {save_path}")
     
     plt.show()
+
+def create_single_mode_multi_wavelength_regions(H, W, radius, detectsize, num_wavelengths, offsets=None):
+    """
+    单模式多波长情况：将各波长的检测区域水平排列
+    """
+    print(f"🎯 单模式多波长：创建水平排列布局，{num_wavelengths}个波长")
+    
+    evaluation_regions = []
+    
+    # 水平排列布局参数
+    padding_ratio = 0.2
+    available_width = W * (1 - 2 * padding_ratio)
+    center_y = H // 2  # 垂直居中
+    
+    if num_wavelengths == 1:
+        # 单波长时居中
+        centers_x = [W // 2]
+    else:
+        # 多波长时均匀分布
+        spacing = available_width / (num_wavelengths - 1)
+        start_x = W * padding_ratio
+        centers_x = [start_x + i * spacing for i in range(num_wavelengths)]
+    
+    print(f"  图像中心Y: {center_y}")
+    print(f"  波长水平位置: {centers_x}")
+    
+    for wl_idx in range(num_wavelengths):
+        center_x = centers_x[wl_idx]
+        center_y_adjusted = center_y
+        
+        # 应用偏移（如果有）
+        if offsets is not None and wl_idx < len(offsets):
+            offset_y, offset_x = offsets[wl_idx]
+            center_x += offset_x
+            center_y_adjusted += offset_y
+        
+        # 边界保护
+        center_x = max(detectsize // 2, min(W - detectsize // 2, center_x))
+        center_y_adjusted = max(detectsize // 2, min(H - detectsize // 2, center_y_adjusted))
+        
+        # 计算检测区域边界
+        half_size = detectsize // 2
+        x_start = max(0, int(center_x - half_size))
+        x_end = min(W, int(center_x + half_size))
+        y_start = max(0, int(center_y_adjusted - half_size))
+        y_end = min(H, int(center_y_adjusted + half_size))
+        
+        evaluation_regions.append((x_start, x_end, y_start, y_end))
+        
+        print(f"  波长{wl_idx+1}: 中心({center_x:.1f}, {center_y_adjusted:.1f}), 区域({x_start}, {x_end}, {y_start}, {y_end})")
+    
+    return evaluation_regions

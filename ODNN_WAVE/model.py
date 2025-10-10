@@ -1,5 +1,4 @@
 import os
-import re
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -117,13 +116,13 @@ class WavelengthDependentDiffractionLayer(nn.Module):
         base_wavelength = wavelengths[self.base_wavelength_idx]
         coefficients = []
         
-        print(f"计算波长系数 (基准波长索引: {self.base_wavelength_idx}, 波长: {base_wavelength*1e9:.1f}nm)")
+        # print(f"计算波长系数 (基准波长索引: {self.base_wavelength_idx}, 波长: {base_wavelength*1e9:.1f}nm)")
         
         for wl in wavelengths:
             # 波长反比关系：λ₀/λ
             coef = base_wavelength / wl
             coefficients.append(coef)
-            print(f"  波长 {wl*1e9:.1f}nm: 系数 = {coef:.4f}")
+            # print(f"  波长 {wl*1e9:.1f}nm: 系数 = {coef:.4f}")
         
         # 转换为torch张量并注册为buffer（不参与训练）
         coefficients = torch.tensor(coefficients, dtype=torch.float32)
@@ -331,8 +330,8 @@ class WavelengthDependentD2NNModel(nn.Module):
         np.savez(save_path, **masks_data)
         print(f"✓ 训练好的相位掩码已保存到: {save_path}")
         print(f"  - Base wavelength idx: {self.config.base_wavelength_idx}")
-        print(f"  - Padding ratio: {self.padding_ratio}")
-        print(f"  - Use apodization: {self.use_apodization}")
+        # print(f"  - Padding ratio: {self.padding_ratio}")
+        # print(f"  - Use apodization: {self.use_apodization}")
         print(f"  - Apodization width: {self.apodization_width}")
         
         return save_path
@@ -464,13 +463,13 @@ class PhysicsBasedMultiWavelengthLayer(nn.Module):
         base_wavelength = wavelengths[self.base_wavelength_idx]
         coefficients = []
         
-        print(f"计算波长系数 (基准波长索引: {self.base_wavelength_idx}, 波长: {base_wavelength*1e9:.1f}nm)")
+        # print(f"计算波长系数 (基准波长索引: {self.base_wavelength_idx}, 波长: {base_wavelength*1e9:.1f}nm)")
         
         for wl in wavelengths:
             # 波长反比关系：λ₀/λ
             coef = base_wavelength / wl
             coefficients.append(coef)
-            print(f"  波长 {wl*1e9:.1f}nm: 系数 = {coef:.4f}")
+            # print(f"  波长 {wl*1e9:.1f}nm: 系数 = {coef:.4f}")
         
         # 注册为buffer（不参与训练）
         coefficients = torch.tensor(coefficients, dtype=torch.float32)
@@ -624,8 +623,8 @@ class MultiModeMultiWavelengthModel(nn.Module):
         np.savez(save_path, **masks_data)
         print(f"✓ 训练好的相位掩码已保存到: {save_path}")
         print(f"  - Base wavelength idx: {self.config.base_wavelength_idx}")
-        print(f"  - Padding ratio: {self.padding_ratio}")
-        print(f"  - Use apodization: {self.use_apodization}")
+        # print(f"  - Padding ratio: {self.padding_ratio}")
+        # print(f"  - Use apodization: {self.use_apodization}")
         print(f"  - Apodization width: {self.apodization_width}")
         
         return save_path
